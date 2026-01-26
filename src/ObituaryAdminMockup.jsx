@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 
 // Obituary Editor Mockup (extended)
 // Current features:
@@ -11,14 +11,19 @@ import React, { useMemo, useState } from "react";
 export default function ObituaryAdminMockup() {
   const [view, setView] = useState("oppdrag"); // oppdrag | editor | annonser | import | statistikk | admin
   const [oppdragList, setOppdragList] = useState(sampleOppdrag());
+  const [annonseList, setAnnonceList] = useState(sampleAnnonser());
   const [selectedOppdragId, setSelectedOppdragId] = useState(null);
+  const [selectedAnnonceId, setSelectedAnnonceId] = useState(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showCreateAnnonceModal, setShowCreateAnnonceModal] = useState(false);
+  const [editingAnnonceDate, setEditingAnnonceDate] = useState(null);
   const [editingOppdrag, setEditingOppdrag] = useState(null);
+  const currentUser = "torgeir.roness";
 
   // Kept for future editor work
   const [editorAd, setEditorAd] = useState(defaultAd());
 
-  function openEditorForOppdrag(id) {
+  function openEditorForOppdrag(id, annonceId) {
     // If the user clicks "Skap annonse", we treat it as: create an annonse on the oppdrag
     // and then open the editor.
     setOppdragList((s) =>
@@ -38,14 +43,29 @@ export default function ObituaryAdminMockup() {
     );
 
     setSelectedOppdragId(id);
+    if (annonceId) {
+      setSelectedAnnonceId(annonceId);
+    } else {
+      const relatedAnnonce = annonceList.find((a) => a.oppdragId === id);
+      setSelectedAnnonceId(relatedAnnonce ? relatedAnnonce.id : null);
+    }
     setView("editor");
 
     const op = oppdragList.find((o) => o.id === id);
     if (op) {
-      // Simple prefill: set title to full name; later map to real editor fields
+      const fullName = `${op.avdoede?.fornavn || ""} ${op.avdoede?.mellomnavn ? op.avdoede.mellomnavn + " " : ""}${op.avdoede?.etternavn || ""}`
+        .replace(/\s+/g, " ")
+        .trim();
       setEditorAd((prev) => ({
         ...prev,
-        title: `${op.avdoede?.fornavn || ""} ${op.avdoede?.etternavn || ""}`.trim(),
+        title: prev.title || "",
+        firstName: op.avdoede?.fornavn || "",
+        middleName: op.avdoede?.mellomnavn || "",
+        lastName: op.avdoede?.etternavn || "",
+        birthDate: op.avdoede?.fodselsdato || prev.birthDate || "",
+        deathDate: prev.deathDate || "",
+        deathPlace: prev.deathPlace || "",
+        takkName: prev.takkName || fullName,
       }));
     }
   }
@@ -86,6 +106,114 @@ export default function ObituaryAdminMockup() {
     }
   }
 
+  function createAnnonceFromOppdrag(oppdragId) {
+    if (!oppdragId) return;
+    const op = oppdragList.find((o) => o.id === oppdragId);
+    if (!op) return;
+    const existing = annonseList.find((a) => a.oppdragId === oppdragId);
+    if (existing) {
+      setSelectedAnnonceId(existing.id);
+      return existing.id;
+    }
+    const now = new Date().toISOString();
+    const id = "A-" + Math.random().toString(36).slice(2, 9);
+    const navn = `${op.avdoede?.fornavn || ""} ${op.avdoede?.mellomnavn ? op.avdoede.mellomnavn + " " : ""}${op.avdoede?.etternavn || ""}`
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const newAnnonce = {
+      id,
+      leverandor: "Oppdrag",
+      type: "Død",
+      navn,
+      publisering: op.innrykksdato || now,
+      opprettet: now,
+      endret: now,
+      publikasjon: op.avis || "Ikke satt",
+      status: "I kø",
+      oppdragId,
+      produsent: currentUser,
+    };
+
+    setAnnonceList((s) => [newAnnonce, ...s]);
+    setOppdragList((s) =>
+      s.map((o) =>
+        o.id === oppdragId
+          ? {
+              ...o,
+              annonse: { ...(o.annonse || {}), exists: true },
+              status: o.status || "Under arbeid",
+              updatedAt: now,
+            }
+          : o
+      )
+    );
+    setSelectedAnnonceId(id);
+    setShowCreateAnnonceModal(false);
+    return id;
+  }
+
+  function openEditorWithOppdrag(op, annonceId) {
+    const fullName = `${op.avdoede?.fornavn || ""} ${op.avdoede?.mellomnavn ? op.avdoede.mellomnavn + " " : ""}${op.avdoede?.etternavn || ""}`
+      .replace(/\s+/g, " ")
+      .trim();
+    setSelectedOppdragId(op.id);
+    if (annonceId) {
+      setSelectedAnnonceId(annonceId);
+    }
+    setView("editor");
+    setEditorAd((prev) => ({
+      ...prev,
+      title: prev.title || "",
+      firstName: op.avdoede?.fornavn || "",
+      middleName: op.avdoede?.mellomnavn || "",
+      lastName: op.avdoede?.etternavn || "",
+      birthDate: op.avdoede?.fodselsdato || prev.birthDate || "",
+      takkName: prev.takkName || fullName,
+    }));
+  }
+
+  function handleOppdragPrimaryAction(op) {
+    const annonceId = createAnnonceFromOppdrag(op.id);
+    openEditorWithOppdrag(op, annonceId);
+  }
+
+  function approveAnnonce(id) {
+    setAnnonceList((s) =>
+      s.map((a) => (a.id === id ? { ...a, status: "Godkjent", endret: new Date().toISOString() } : a))
+    );
+  }
+
+  function openEditorForAnnonce(annonce) {
+    if (!annonce.oppdragId) {
+      alert("Denne annonsen har ikke et oppdrag knyttet til seg ennå.");
+      return;
+    }
+    const op = oppdragList.find((o) => o.id === annonce.oppdragId);
+    if (op) {
+      openEditorWithOppdrag(op, annonce.id);
+    } else {
+      setSelectedAnnonceId(annonce.id);
+      openEditorForOppdrag(annonce.oppdragId);
+    }
+  }
+
+  function updatePublisering(annonceId, dato) {
+    setAnnonceList((s) =>
+      s.map((a) => (a.id === annonceId ? { ...a, publisering: dato, endret: new Date().toISOString() } : a))
+    );
+    setEditingAnnonceDate(null);
+  }
+
+  function markAnnonceSent() {
+    if (!selectedAnnonceId) return;
+    setAnnonceList((s) =>
+      s.map((a) =>
+        a.id === selectedAnnonceId ? { ...a, status: "Sendt til godkjenning", endret: new Date().toISOString() } : a
+      )
+    );
+  }
+
   const selectedOppdrag = oppdragList.find((o) => o.id === selectedOppdragId) || null;
 
   return (
@@ -101,11 +229,7 @@ export default function ObituaryAdminMockup() {
           <MenuItem label="Statistikk" active={view === "statistikk"} onClick={() => setView("statistikk")} />
           <MenuItem label="Administrasjon" active={view === "admin"} onClick={() => setView("admin")} />
         </nav>
-        <div className="mt-4">
-          <button className="w-full bg-slate-800 text-white py-2 rounded" onClick={() => setShowCreateModal(true)}>
-            Opprett oppdrag
-          </button>
-        </div>
+        <div className="mt-4" />
       </aside>
 
       {/* Main area */}
@@ -113,17 +237,35 @@ export default function ObituaryAdminMockup() {
         {view === "oppdrag" && (
           <OppdragView
             oppdragList={oppdragList}
-            onOpen={(id) => openEditorForOppdrag(id)}
+            onOpen={(op) => handleOppdragPrimaryAction(op)}
             onEdit={(op) => setEditingOppdrag(op)}
             onDelete={(id) => deleteOppdrag(id)}
+            onCreate={() => setShowCreateModal(true)}
           />
         )}
 
         {view === "editor" && (
-          <EditorView oppdrag={selectedOppdrag} ad={editorAd} setAd={setEditorAd} onBack={() => setView("oppdrag")} />
+          <EditorView
+            oppdrag={selectedOppdrag}
+            ad={editorAd}
+            setAd={setEditorAd}
+            onBack={() => setView("oppdrag")}
+            onDone={() => {
+              markAnnonceSent();
+              setView("annonser");
+            }}
+          />
         )}
 
-        {view === "annonser" && <Placeholder title="Annonser" />}
+        {view === "annonser" && (
+          <AnnonserView
+            annonseList={annonseList}
+            onCreate={() => setShowCreateAnnonceModal(true)}
+            onApprove={(id) => approveAnnonce(id)}
+            onEdit={(annonce) => openEditorForAnnonce(annonce)}
+            onEditDate={(annonce) => setEditingAnnonceDate(annonce)}
+          />
+        )}
         {view === "import" && <Placeholder title="Importstatus" />}
         {view === "statistikk" && <Placeholder title="Statistikk" />}
         {view === "admin" && <Placeholder title="Administrasjon" />}
@@ -137,6 +279,25 @@ export default function ObituaryAdminMockup() {
           oppdrag={editingOppdrag}
           onClose={() => setEditingOppdrag(null)}
           onSave={(data) => updateOppdrag(editingOppdrag.id, data)}
+        />
+      )}
+
+      {showCreateAnnonceModal && (
+        <CreateAnnonceFromOppdragModal
+          oppdragList={oppdragList}
+          onClose={() => setShowCreateAnnonceModal(false)}
+          onConfirm={(oppdragId) => {
+            const annonceId = createAnnonceFromOppdrag(oppdragId);
+            openEditorForOppdrag(oppdragId, annonceId);
+          }}
+        />
+      )}
+
+      {editingAnnonceDate && (
+        <ChangePubliseringModal
+          annonse={editingAnnonceDate}
+          onClose={() => setEditingAnnonceDate(null)}
+          onSave={(dato) => updatePublisering(editingAnnonceDate.id, dato)}
         />
       )}
     </div>
@@ -155,7 +316,7 @@ function MenuItem({ label, active, onClick }) {
   );
 }
 
-function OppdragView({ oppdragList, onOpen, onEdit, onDelete }) {
+function OppdragView({ oppdragList, onOpen, onEdit, onDelete, onCreate }) {
   // Filters similar to bilde 2 (without 'Avis')
   const [searchText, setSearchText] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -197,10 +358,15 @@ function OppdragView({ oppdragList, onOpen, onEdit, onDelete }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-2xl font-bold">Oppdrag</h3>
-        <div className="text-sm text-slate-600">
-          Viser {filtered.length} av {oppdragList.length} oppdrag
+        <div>
+          <h3 className="text-2xl font-bold">Oppdrag</h3>
+          <div className="text-sm text-slate-600">
+            Viser {filtered.length} av {oppdragList.length} oppdrag
+          </div>
         </div>
+        <button className="px-4 py-2 bg-slate-800 text-white rounded" onClick={onCreate}>
+          Opprett oppdrag
+        </button>
       </div>
 
       {/* Filters */}
@@ -283,7 +449,7 @@ function OppdragView({ oppdragList, onOpen, onEdit, onDelete }) {
                       >
                         Slett
                       </button>
-                      <button className="px-3 py-1 border rounded text-sm" onClick={() => onOpen(o.id)}>
+                      <button className="px-3 py-1 border rounded text-sm" onClick={() => onOpen(o)}>
                         {primaryLabel}
                       </button>
                     </div>
@@ -309,7 +475,243 @@ function OppdragView({ oppdragList, onOpen, onEdit, onDelete }) {
   );
 }
 
-function EditorView({ oppdrag, ad, setAd, onBack }) {
+function AnnonserView({ annonseList, onCreate, onApprove, onEdit, onEditDate }) {
+  const [searchText, setSearchText] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [publication, setPublication] = useState("Alle");
+  const [annonseType, setAnnonceType] = useState("Alle");
+  const [onlyInQueue, setOnlyInQueue] = useState(false);
+  const [openMenuId, setOpenMenuId] = useState(null);
+
+  const publications = useMemo(() => getPublications(annonseList), [annonseList]);
+
+  const filtered = useMemo(() => {
+    return annonseList.filter((a) => {
+      if (searchText) {
+        const text = searchText.toLowerCase().trim();
+        const haystack = `${a.id} ${a.navn} ${a.leverandor}`.toLowerCase();
+        if (!haystack.includes(text)) return false;
+      }
+
+      if (onlyInQueue && a.status !== "I kø") return false;
+
+      const d = a.publisering ? new Date(a.publisering) : null;
+      if (dateFrom && d) {
+        const df = new Date(dateFrom);
+        if (d < df) return false;
+      }
+      if (dateTo && d) {
+        const dt = new Date(dateTo);
+        if (d > dt) return false;
+      }
+
+      if (publication !== "Alle" && a.publikasjon !== publication) return false;
+      if (annonseType !== "Alle" && a.type !== annonseType) return false;
+
+      return true;
+    });
+  }, [annonseList, searchText, dateFrom, dateTo, publication, annonseType, onlyInQueue]);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-2xl font-bold">Annonser</h3>
+          <div className="text-sm text-slate-600">
+            Viser {filtered.length} av {annonseList.length} annonser
+          </div>
+        </div>
+        <button className="px-4 py-2 bg-slate-800 text-white rounded" onClick={onCreate}>
+          Opprett annonse
+        </button>
+      </div>
+
+      <div className="bg-white border rounded p-4 mb-4">
+        <div className="grid grid-cols-12 gap-3 items-end">
+          <div className="col-span-5">
+            <label className="text-sm block">Søketekst:</label>
+            <input
+              className="w-full border p-2 rounded mt-1 text-sm"
+              placeholder="Søk etter id eller navn"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+            />
+          </div>
+
+          <div className="col-span-3">
+            <label className="text-sm block">Dato fra:</label>
+            <input type="date" className="w-full border p-2 rounded mt-1 text-sm" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          </div>
+          <div className="col-span-3">
+            <label className="text-sm block">Dato til:</label>
+            <input type="date" className="w-full border p-2 rounded mt-1 text-sm" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          </div>
+
+          <div className="col-span-3">
+            <label className="text-sm block">Avis:</label>
+            <select className="w-full border p-2 rounded mt-1 text-sm" value={publication} onChange={(e) => setPublication(e.target.value)}>
+              {publications.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="col-span-2">
+            <label className="text-sm block">Type:</label>
+            <select className="w-full border p-2 rounded mt-1 text-sm" value={annonseType} onChange={(e) => setAnnonceType(e.target.value)}>
+              <option value="Alle">Alle</option>
+              <option value="Død">Død</option>
+              <option value="Takk">Takk</option>
+            </select>
+          </div>
+
+          <div className="col-span-7">
+            <label className="inline-flex items-center text-sm mt-2">
+              <input type="checkbox" className="mr-2" checked={onlyInQueue} onChange={(e) => setOnlyInQueue(e.target.checked)} />
+              <span>Vis bare annonser som er i kø</span>
+            </label>
+          </div>
+
+          <div className="col-span-12 text-right mt-2">
+            <button className="px-3 py-1 bg-slate-800 text-white rounded mr-2" onClick={() => {}}>
+              Søk i annonser
+            </button>
+            <button
+              className="px-3 py-1 border rounded"
+              onClick={() => {
+                setSearchText("");
+                setDateFrom("");
+                setDateTo("");
+                setPublication("Alle");
+                setAnnonceType("Alle");
+                setOnlyInQueue(false);
+              }}
+            >
+              Fjern satte filter
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white border rounded shadow-sm">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="p-3 text-left">ID</th>
+              <th className="p-3 text-left">Leverandør</th>
+              <th className="p-3 text-left">Type</th>
+              <th className="p-3 text-left">Navn</th>
+              <th className="p-3">Publisering</th>
+              <th className="p-3">Opprettet</th>
+              <th className="p-3">Endret</th>
+              <th className="p-3">Publikasjon</th>
+              <th className="p-3">Status</th>
+              <th className="p-3 text-right">Handlinger</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((a) => (
+              <tr key={a.id} className="border-t hover:bg-slate-50 cursor-pointer" onClick={() => onEdit(a)}>
+                <td className="p-3">{a.id}</td>
+                <td className="p-3">{a.leverandor}</td>
+                <td className="p-3">{a.type}</td>
+                <td className="p-3">{a.navn}</td>
+                <td className="p-3">{formatDateTime(a.publisering)}</td>
+                <td className="p-3">{formatDateTime(a.opprettet)}</td>
+                <td className="p-3">{formatDateTime(a.endret)}</td>
+                <td className="p-3">{a.publikasjon}</td>
+                <td className="p-3">
+                  <span className={`px-2 py-0.5 rounded-full text-xs ${statusClass(a.status)}`}>{a.status}</span>
+                </td>
+                <td className="p-3 text-right">
+                  <div className="relative inline-block text-left">
+                    <button
+                      className="px-2 py-1 border rounded"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenMenuId(openMenuId === a.id ? null : a.id);
+                      }}
+                    >
+                      ...
+                    </button>
+                    {openMenuId === a.id && (
+                      <div className="absolute right-0 mt-2 w-40 bg-white border rounded shadow-lg z-10">
+                        <button
+                          className="block w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenMenuId(null);
+                            onApprove(a.id);
+                          }}
+                        >
+                          Godkjenn
+                        </button>
+                        <button
+                          className="block w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenMenuId(null);
+                            onEdit(a);
+                          }}
+                        >
+                          Rediger
+                        </button>
+                        <button
+                          className="block w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenMenuId(null);
+                            onEditDate(a);
+                          }}
+                        >
+                          Endre pub.dato
+                        </button>
+                        <button
+                          className="block w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenMenuId(null);
+                            alert("PDF lastes ned (mock).");
+                          }}
+                        >
+                          Last ned PDF
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function EditorView({ oppdrag, ad, setAd, onBack, onDone }) {
+  const [step, setStep] = useState(1);
+  const [showSymbolBank, setShowSymbolBank] = useState(false);
+  const [symbolSearch, setSymbolSearch] = useState("");
+
+  useEffect(() => {
+    setStep(1);
+  }, [oppdrag?.id]);
+
+  useEffect(() => {
+    if (!ad.relativesRows || ad.relativesRows.length === 0) {
+      setAd((prev) => ({
+        ...prev,
+        relativesRows: [
+          { id: "row-1", layout: "one", left: prev.relativesSingle || "", right: "" },
+        ],
+      }));
+    }
+  }, [ad.relativesRows, ad.relativesSingle, setAd]);
+
   if (!oppdrag) {
     return (
       <div>
@@ -317,6 +719,115 @@ function EditorView({ oppdrag, ad, setAd, onBack }) {
           Tilbake
         </button>
         <p>Ingen oppdrag valgt.</p>
+      </div>
+    );
+  }
+
+  const publicationOptions = [
+    { name: "Adresseavisen", printDates: ["2026-01-28", "2026-01-29", "2026-01-30"] },
+    { name: "Fædrelandsvennen", printDates: ["2026-01-27", "2026-01-28", "2026-01-31"] },
+    { name: "Marsteinen", printDates: ["2026-01-26", "2026-01-29"] },
+    { name: "Agderposten", printDates: ["2026-01-26", "2026-01-30"] },
+  ];
+  const selectedPublication = publicationOptions.find((p) => p.name === ad.publication);
+  const printDates = selectedPublication ? selectedPublication.printDates : [];
+
+  const templateOptions =
+    ad.annonseType === "Takk"
+      ? ["Takk 1sp", "Takk 1sp m/symbol", "Takk 2sp", "Takk 2sp m/symbol"]
+      : ["1sp", "2sp", "1sp dobbelannonser"];
+
+  const templateLayout = (label) => {
+    const isTwoCol = label.includes("2sp");
+    const hasSymbol = label.includes("symbol");
+    const isDouble = label.includes("dobbel");
+    return (
+      <div className={`h-16 border rounded mb-2 bg-white p-2 ${isTwoCol ? "grid grid-cols-2 gap-2" : "flex"}`}>
+        <div className="flex-1 flex flex-col justify-between">
+          <div className="h-2 bg-slate-200 rounded" />
+          <div className="h-2 bg-slate-200 rounded w-3/4" />
+          <div className="h-2 bg-slate-200 rounded w-5/6" />
+        </div>
+        {hasSymbol ? <div className="w-6 h-6 border rounded-full self-center ml-2" /> : null}
+        {isDouble ? <div className="w-2 h-full bg-slate-100 ml-2" /> : null}
+      </div>
+    );
+  };
+
+  const verseSuggestions = ["Du gav oss så mye", "Takk for alt du var", "Minnene lever videre"];
+  const symbolOptions = ["✝", "❦", "✶", "✜", "✟", "✙", "✞", "✤", "✧", "✿", "❀"];
+  const filteredSymbols = symbolOptions.filter((s) => s.includes(symbolSearch.trim()));
+
+  const fullName = [ad.firstName, ad.middleName, ad.lastName].filter(Boolean).join(" ").trim();
+  const step1Valid = Boolean(ad.publication && ad.printDate && ad.digitalDate);
+  const step2Valid = Boolean(ad.annonseType && ad.template);
+
+  function renderPreview() {
+    if (ad.annonseType === "Takk") {
+      return (
+        <div className="border-2 border-slate-400 rounded p-6 bg-white">
+          {ad.symbol ? (
+            <div className="mb-3 text-center" style={{ fontSize: `${ad.symbolSize || 24}px` }}>
+              {ad.symbol}
+            </div>
+          ) : null}
+          <div className="text-lg font-bold mb-2">Hjertelig takk</div>
+          <div className="text-sm leading-relaxed mb-3">
+            {ad.takkBody1 || ""}
+            {ad.takkName ? " " : ""}
+            {ad.takkName ? <span className="font-semibold">{ad.takkName}</span> : null}
+            {ad.takkBody2 ? ` ${ad.takkBody2}` : ""}
+          </div>
+          {ad.takkSignature ? <div className="text-sm text-right font-semibold">{ad.takkSignature}</div> : null}
+        </div>
+      );
+    }
+
+    return (
+      <div className="border rounded p-6 text-center bg-white">
+        {ad.symbol ? (
+          <div className="mb-3" style={{ fontSize: `${ad.symbolSize || 24}px` }}>
+            {ad.symbol}
+          </div>
+        ) : null}
+        {ad.intro ? <div className="text-sm italic mb-2">{ad.intro}</div> : null}
+        {ad.title ? <div className="text-sm mb-1">{ad.title}</div> : null}
+        {fullName ? <div className="text-2xl font-bold mb-1">{fullName}</div> : null}
+        {ad.maidenName || ad.birthDate ? (
+          <div className="text-sm mb-2">
+            f. {[ad.maidenName, ad.birthDate ? formatDate(ad.birthDate) : ""].filter(Boolean).join(" ")}
+          </div>
+        ) : null}
+        {ad.deathFreeText || ad.deathPlace || ad.deathDate ? (
+          <div className="text-sm mb-3">
+            {formatDeathLine(ad.deathFreeText, ad.deathPlace, ad.deathDate)}
+          </div>
+        ) : null}
+        {ad.verse1 ? <div className="text-sm italic mb-3">{ad.verse1}</div> : null}
+        {ad.relativesRows?.length ? (
+          <div className="mb-3 text-sm space-y-2">
+            {ad.relativesRows.map((row) => {
+              if (row.layout === "empty") return <div key={row.id} className="h-3" />;
+              if (row.layout === "two") {
+                return (
+                  <div key={row.id} className="grid grid-cols-2 gap-4">
+                    <div>{row.left}</div>
+                    <div>{row.right}</div>
+                  </div>
+                );
+              }
+              return (
+                <div key={row.id} className="text-center">
+                  {row.left}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+        {ad.verse2 ? <div className="text-sm italic mb-3">{ad.verse2}</div> : null}
+        {ad.ceremonyInfo ? <div className="text-sm mb-2">{ad.ceremonyInfo}</div> : null}
+        {ad.donations ? <div className="text-sm mb-2">{ad.donations}</div> : null}
+        {ad.agency ? <div className="text-sm font-semibold">{ad.agency}</div> : null}
       </div>
     );
   }
@@ -329,7 +840,7 @@ function EditorView({ oppdrag, ad, setAd, onBack }) {
             Tilbake
           </button>
           <span className="text-lg font-bold">
-            Editor — {oppdrag.avdoede?.fornavn} {oppdrag.avdoede?.etternavn}
+            Editor â€” {oppdrag.avdoede?.fornavn} {oppdrag.avdoede?.etternavn}
           </span>
         </div>
         <div className="flex items-center gap-3">
@@ -338,25 +849,548 @@ function EditorView({ oppdrag, ad, setAd, onBack }) {
         </div>
       </div>
 
-      {/* Minimal placeholder editor to keep this file focused on Oppdrag-siden */}
-      <div className="bg-white border rounded p-4">
-        <div className="text-sm text-slate-600 mb-2">Mock editor-tilstand</div>
-        <div className="grid grid-cols-12 gap-3 items-end">
-          <div className="col-span-8">
-            <label className="text-sm block">Tittel (fra oppdrag)</label>
-            <input className="w-full border p-2 rounded mt-1 text-sm" value={ad.title} onChange={(e) => setAd({ ...ad, title: e.target.value })} />
-          </div>
-          <div className="col-span-4">
-            <label className="text-sm block">Symbol</label>
-            <input className="w-full border p-2 rounded mt-1 text-sm" value={ad.symbol} onChange={(e) => setAd({ ...ad, symbol: e.target.value })} />
+      <div className="bg-white border rounded p-4 mb-4">
+        <div className="flex items-center justify-between">
+          <div className="text-sm text-slate-600">Steg {step} av 4</div>
+          <div className="flex gap-2">
+            <button className="px-3 py-1 border rounded" onClick={() => setStep((s) => Math.max(1, s - 1))} disabled={step === 1}>
+              Forrige
+            </button>
+            {step < 4 ? (
+              <button
+                className="px-3 py-1 bg-slate-800 text-white rounded"
+                onClick={() => setStep((s) => Math.min(4, s + 1))}
+                disabled={(step === 1 && !step1Valid) || (step === 2 && !step2Valid)}
+              >
+                Neste
+              </button>
+            ) : (
+              <button
+                className="px-3 py-1 bg-slate-800 text-white rounded"
+                onClick={() => {
+                  alert("Din bestilling er sendt til godkjenning. Du vil få e-post når mediehuset har godkjent bestillingen");
+                  onDone?.();
+                }}
+              >
+                Send bestilling
+              </button>
+            )}
           </div>
         </div>
-        <div className="mt-4 text-sm">
-          <div className="font-semibold mb-1">Preview</div>
-          <div className="border rounded p-4 text-center">
-            <div className="mb-2">{ad.symbol}</div>
-            <div className="text-lg font-bold">{ad.title}</div>
+        {step === 1 && !step1Valid ? <div className="text-xs text-red-600 mt-2">Velg publikasjon og begge publiseringsdatoer.</div> : null}
+        {step === 2 && !step2Valid ? <div className="text-xs text-red-600 mt-2">Velg annonsetype og mal.</div> : null}
+      </div>
+
+      {step === 1 && (
+        <div className="bg-white border rounded p-6">
+          <h4 className="font-semibold mb-4">1. Publikasjonskalender</h4>
+          <div className="grid grid-cols-12 gap-4">
+            <div className="col-span-4">
+              <label className="text-sm block">Publikasjon</label>
+              <select
+                className="w-full border p-2 rounded mt-1 text-sm"
+                value={ad.publication}
+                onChange={(e) => setAd({ ...ad, publication: e.target.value, printDate: "" })}
+              >
+                <option value="">Velg publikasjon</option>
+                {publicationOptions.map((p) => (
+                  <option key={p.name} value={p.name}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="col-span-4">
+              <label className="text-sm block">Innrykk print</label>
+              <input
+                type="date"
+                className="w-full border p-2 rounded mt-1 text-sm"
+                value={ad.printDate}
+                onChange={(e) => setAd({ ...ad, printDate: e.target.value })}
+                disabled={!ad.publication}
+                list="print-date-options"
+              />
+              <datalist id="print-date-options">
+                {printDates.map((d) => (
+                  <option key={d} value={d} />
+                ))}
+              </datalist>
+            </div>
+            <div className="col-span-4">
+              <label className="text-sm block">Publisering digitalt</label>
+              <input
+                type="date"
+                className="w-full border p-2 rounded mt-1 text-sm"
+                value={ad.digitalDate}
+                onChange={(e) => setAd({ ...ad, digitalDate: e.target.value })}
+              />
+            </div>
           </div>
+        </div>
+      )}
+
+      {step === 2 && (
+        <div className="bg-white border rounded p-6">
+          <h4 className="font-semibold mb-4">2. Velg mal</h4>
+          <div className="grid grid-cols-12 gap-4">
+            <div className="col-span-4">
+              <label className="text-sm block">Type annonse</label>
+              <select
+                className="w-full border p-2 rounded mt-1 text-sm"
+                value={ad.annonseType}
+                onChange={(e) => setAd({ ...ad, annonseType: e.target.value, template: "" })}
+              >
+                <option value="">Velg type</option>
+                <option value="Død">Død</option>
+                <option value="Takk">Takk</option>
+              </select>
+            </div>
+            <div className="col-span-8">
+              <label className="text-sm block">Type mal</label>
+              <div className="grid grid-cols-4 gap-3 mt-1">
+                {templateOptions.map((t) => (
+                  <button
+                    key={t}
+                    className={`border rounded p-3 text-sm text-left ${ad.template === t ? "border-slate-800 bg-slate-50" : "hover:bg-slate-50"}`}
+                    onClick={() => setAd({ ...ad, template: t })}
+                  >
+                    {templateLayout(t)}
+                    <div className="font-semibold">{t}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {step === 3 && (
+        <div className="grid grid-cols-12 gap-6">
+          <div className="col-span-6 bg-white border rounded p-6">
+            <h4 className="font-semibold mb-4">3. Innhold</h4>
+            <div className="grid grid-cols-12 gap-3">
+              <div className="col-span-6">
+                <label className="text-sm block">Symbol</label>
+                <div className="flex gap-2 mt-1">
+                  <input className="w-full border p-2 rounded text-sm" value={ad.symbol} onChange={(e) => setAd({ ...ad, symbol: e.target.value })} />
+                  <button className="px-3 py-1 border rounded" onClick={() => setShowSymbolBank(true)}>
+                    Velg
+                  </button>
+                </div>
+              </div>
+              <div className="col-span-6">
+                <label className="text-sm block">Symbolstørrelse</label>
+                <div className="flex items-center gap-2 mt-1">
+                  <button className="px-2 py-1 border rounded" onClick={() => setAd({ ...ad, symbolSize: Math.max(12, ad.symbolSize - 2) })}>
+                    -
+                  </button>
+                  <div className="text-sm">{ad.symbolSize}px</div>
+                  <button className="px-2 py-1 border rounded" onClick={() => setAd({ ...ad, symbolSize: Math.min(64, ad.symbolSize + 2) })}>
+                    +
+                  </button>
+                </div>
+              </div>
+              {ad.annonseType === "Takk" ? (
+                <>
+                  <div className="col-span-12">
+                    <label className="text-sm block">Hjertelig takk</label>
+                    <input className="w-full border p-2 rounded mt-1 text-sm bg-slate-50" value="Hjertelig takk" readOnly />
+                  </div>
+                  <div className="col-span-12">
+                    <label className="text-sm block">Takketekst 1</label>
+                    <textarea
+                      className="w-full border p-2 rounded mt-1 text-sm"
+                      rows={3}
+                      placeholder="F.eks. for all vennlig deltakelse, blomster, oppmerksomhet og minnegaver"
+                      value={ad.takkBody1}
+                      onChange={(e) => setAd({ ...ad, takkBody1: e.target.value })}
+                    />
+                  </div>
+                  <div className="col-span-6">
+                    <label className="text-sm block">Navn</label>
+                    <input className="w-full border p-2 rounded mt-1 text-sm" value={ad.takkName} onChange={(e) => setAd({ ...ad, takkName: e.target.value })} />
+                  </div>
+                  <div className="col-span-6">
+                    <label className="text-sm block">Takketekst 2</label>
+                    <input
+                      className="w-full border p-2 rounded mt-1 text-sm"
+                      placeholder="F.eks. bortgang og begravelse"
+                      value={ad.takkBody2}
+                      onChange={(e) => setAd({ ...ad, takkBody2: e.target.value })}
+                    />
+                  </div>
+                  <div className="col-span-12">
+                    <label className="text-sm block">Signatur</label>
+                    <input
+                      className="w-full border p-2 rounded mt-1 text-sm"
+                      placeholder="F.eks. Arne, Petra og Frank med familier"
+                      value={ad.takkSignature}
+                      onChange={(e) => setAd({ ...ad, takkSignature: e.target.value })}
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="col-span-12">
+                    <label className="text-sm block">Innledning</label>
+                    <input
+                      className="w-full border p-2 rounded mt-1 text-sm"
+                      placeholder="F.eks. Vår alles kjære"
+                      value={ad.intro}
+                      onChange={(e) => setAd({ ...ad, intro: e.target.value })}
+                    />
+                  </div>
+                  <div className="col-span-12">
+                    <label className="text-sm block">Tittel</label>
+                    <input
+                      className="w-full border p-2 rounded mt-1 text-sm"
+                      placeholder="F.eks. doktor"
+                      value={ad.title}
+                      onChange={(e) => setAd({ ...ad, title: e.target.value })}
+                    />
+                  </div>
+                  <div className="col-span-4">
+                    <label className="text-sm block">Fornavn</label>
+                    <input className="w-full border p-2 rounded mt-1 text-sm" value={ad.firstName} onChange={(e) => setAd({ ...ad, firstName: e.target.value })} />
+                  </div>
+                  <div className="col-span-4">
+                    <label className="text-sm block">Mellomnavn</label>
+                    <input className="w-full border p-2 rounded mt-1 text-sm" value={ad.middleName} onChange={(e) => setAd({ ...ad, middleName: e.target.value })} />
+                  </div>
+                  <div className="col-span-4">
+                    <label className="text-sm block">Etternavn</label>
+                    <input className="w-full border p-2 rounded mt-1 text-sm" value={ad.lastName} onChange={(e) => setAd({ ...ad, lastName: e.target.value })} />
+                  </div>
+                  <div className="col-span-6">
+                    <label className="text-sm block">Fødenavn</label>
+                    <input className="w-full border p-2 rounded mt-1 text-sm" value={ad.maidenName} onChange={(e) => setAd({ ...ad, maidenName: e.target.value })} />
+                  </div>
+                  <div className="col-span-6">
+                    <label className="text-sm block">Fødselsdato</label>
+                    <input type="date" className="w-full border p-2 rounded mt-1 text-sm" value={ad.birthDate} onChange={(e) => setAd({ ...ad, birthDate: e.target.value })} />
+                  </div>
+                  <div className="col-span-4">
+                    <label className="text-sm block">Fritekst</label>
+                    <input
+                      className="w-full border p-2 rounded mt-1 text-sm"
+                      placeholder="F.eks. Døde fra oss i dag"
+                      value={ad.deathFreeText}
+                      onChange={(e) => setAd({ ...ad, deathFreeText: e.target.value })}
+                    />
+                  </div>
+                  <div className="col-span-4">
+                    <label className="text-sm block">Dødssted</label>
+                    <input className="w-full border p-2 rounded mt-1 text-sm" value={ad.deathPlace} onChange={(e) => setAd({ ...ad, deathPlace: e.target.value })} />
+                  </div>
+                  <div className="col-span-4">
+                    <label className="text-sm block">Dødsdato</label>
+                    <input type="date" className="w-full border p-2 rounded mt-1 text-sm" value={ad.deathDate} onChange={(e) => setAd({ ...ad, deathDate: e.target.value })} />
+                  </div>
+                  <div className="col-span-12">
+                    <label className="text-sm block">Vers 1</label>
+                    <textarea className="w-full border p-2 rounded mt-1 text-sm" rows={2} value={ad.verse1} onChange={(e) => setAd({ ...ad, verse1: e.target.value })} />
+                    <div className="mt-2">
+                      <select className="border p-2 rounded text-sm" value="" onChange={(e) => setAd({ ...ad, verse1: e.target.value })}>
+                        <option value="">Velg tidligere vers</option>
+                        {verseSuggestions.map((v) => (
+                          <option key={v} value={v}>
+                            {v}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="col-span-12">
+                    <label className="text-sm block">Pårørende</label>
+                    <div className="text-xs text-slate-500 mt-1">
+                      Bruk 1 kolonne for partner. 2 kolonner for barn + partner. Legg inn tom rad for å skille grupper.
+                    </div>
+                    <div className="mt-2 space-y-2">
+                      {(ad.relativesRows || []).map((row, idx) => (
+                        <div key={row.id} className="grid grid-cols-12 gap-2 items-center">
+                          <div className="col-span-3">
+                            <select
+                              className="w-full border p-2 rounded text-sm"
+                              value={row.layout}
+                              onChange={(e) => {
+                                const next = [...ad.relativesRows];
+                                next[idx] = { ...row, layout: e.target.value };
+                                setAd({ ...ad, relativesRows: next });
+                              }}
+                            >
+                              <option value="one">1 kolonne</option>
+                              <option value="two">2 kolonner</option>
+                              <option value="empty">Tom rad</option>
+                            </select>
+                          </div>
+                          <div className="col-span-4">
+                            <input
+                              className="w-full border p-2 rounded text-sm"
+                              placeholder="Frank"
+                              value={row.left || ""}
+                              disabled={row.layout === "empty"}
+                              onChange={(e) => {
+                                const next = [...ad.relativesRows];
+                                next[idx] = { ...row, left: e.target.value };
+                                setAd({ ...ad, relativesRows: next });
+                              }}
+                            />
+                          </div>
+                          <div className="col-span-4">
+                            <input
+                              className="w-full border p-2 rounded text-sm"
+                              placeholder="Marit"
+                              value={row.right || ""}
+                              disabled={row.layout !== "two"}
+                              onChange={(e) => {
+                                const next = [...ad.relativesRows];
+                                next[idx] = { ...row, right: e.target.value };
+                                setAd({ ...ad, relativesRows: next });
+                              }}
+                            />
+                          </div>
+                          <div className="col-span-1 text-right">
+                            <button
+                              className="px-2 py-1 border rounded"
+                              onClick={() => {
+                                const next = ad.relativesRows.filter((_, i) => i !== idx);
+                                setAd({ ...ad, relativesRows: next });
+                              }}
+                            >
+                              -
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        className="px-3 py-1 border rounded"
+                        onClick={() =>
+                          setAd({
+                            ...ad,
+                            relativesRows: [...(ad.relativesRows || []), { id: `row-${Date.now()}`, layout: "one", left: "", right: "" }],
+                          })
+                        }
+                      >
+                        Legg til 1 kolonne
+                      </button>
+                      <button
+                        className="px-3 py-1 border rounded"
+                        onClick={() =>
+                          setAd({
+                            ...ad,
+                            relativesRows: [...(ad.relativesRows || []), { id: `row-${Date.now()}`, layout: "two", left: "", right: "" }],
+                          })
+                        }
+                      >
+                        Legg til 2 kolonner
+                      </button>
+                      <button
+                        className="px-3 py-1 border rounded"
+                        onClick={() =>
+                          setAd({
+                            ...ad,
+                            relativesRows: [...(ad.relativesRows || []), { id: `row-${Date.now()}`, layout: "empty", left: "", right: "" }],
+                          })
+                        }
+                      >
+                        Legg til tom rad
+                      </button>
+                    </div>
+                  </div>
+                  <div className="col-span-12">
+                    <label className="text-sm block">Vers 2</label>
+                    <textarea className="w-full border p-2 rounded mt-1 text-sm" rows={2} value={ad.verse2} onChange={(e) => setAd({ ...ad, verse2: e.target.value })} />
+                    <div className="mt-2">
+                      <select className="border p-2 rounded text-sm" value="" onChange={(e) => setAd({ ...ad, verse2: e.target.value })}>
+                        <option value="">Velg tidligere vers</option>
+                        {verseSuggestions.map((v) => (
+                          <option key={v} value={v}>
+                            {v}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="col-span-12">
+                    <label className="text-sm block">Informasjon om seremonitid og sted</label>
+                    <textarea className="w-full border p-2 rounded mt-1 text-sm" rows={2} value={ad.ceremonyInfo} onChange={(e) => setAd({ ...ad, ceremonyInfo: e.target.value })} />
+                  </div>
+                  <div className="col-span-12">
+                    <label className="text-sm block">Informasjon om gaver/donasjoner</label>
+                    <textarea className="w-full border p-2 rounded mt-1 text-sm" rows={2} value={ad.donations} onChange={(e) => setAd({ ...ad, donations: e.target.value })} />
+                  </div>
+                  <div className="col-span-6">
+                    <label className="text-sm block">Byrånavn</label>
+                    <input className="w-full border p-2 rounded mt-1 text-sm" value={ad.agency} onChange={(e) => setAd({ ...ad, agency: e.target.value })} />
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+          <div className="col-span-6">
+            <div className="mb-2 text-sm text-slate-600">Livevisning</div>
+            {renderPreview()}
+          </div>
+        </div>
+      )}
+
+      {step === 4 && (
+        <div className="grid grid-cols-12 gap-6">
+          <div className="col-span-7 bg-white border rounded p-6">
+            <h4 className="font-semibold mb-4">4. Korrektur</h4>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <div className="text-sm text-slate-600 mb-2">Digital</div>
+                {renderPreview()}
+              </div>
+              <div>
+                <div className="text-sm text-slate-600 mb-2">Print</div>
+                {renderPreview()}
+              </div>
+            </div>
+          </div>
+          <div className="col-span-5 bg-white border rounded p-6">
+            <h4 className="font-semibold mb-4">Ordreoversikt</h4>
+            <div className="text-sm space-y-2">
+              <div>
+                <span className="text-slate-600">Publikasjon:</span> {ad.publication || "-"}
+              </div>
+              <div>
+                <span className="text-slate-600">Innrykk print:</span> {ad.printDate ? formatDate(ad.printDate) : "-"}
+              </div>
+              <div>
+                <span className="text-slate-600">Innrykk digitalt:</span> {ad.digitalDate ? formatDate(ad.digitalDate) : "-"}
+              </div>
+              <div>
+                <span className="text-slate-600">Totalbeløp inkl. mva:</span> -
+              </div>
+            </div>
+            <button
+              className="mt-6 w-full bg-slate-800 text-white py-2 rounded"
+              onClick={() => {
+                alert("Din bestilling er sendt til godkjenning. Du vil få e-post når mediehuset har godkjent bestillingen");
+                onDone?.();
+              }}
+            >
+              Send bestilling
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showSymbolBank && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded shadow-lg w-full max-w-md p-6">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-lg font-bold">Symbolbank</h3>
+              <button className="px-2 py-1 border rounded" onClick={() => setShowSymbolBank(false)}>
+                Lukk
+              </button>
+            </div>
+            <input className="w-full border p-2 rounded text-sm mb-3" placeholder="Søk symbol" value={symbolSearch} onChange={(e) => setSymbolSearch(e.target.value)} />
+            <div className="grid grid-cols-6 gap-2">
+              {filteredSymbols.map((s) => (
+                <button
+                  key={s}
+                  className="border rounded p-2 text-lg hover:bg-slate-50"
+                  onClick={() => {
+                    setAd({ ...ad, symbol: s });
+                    setShowSymbolBank(false);
+                    setSymbolSearch("");
+                  }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CreateAnnonceFromOppdragModal({ oppdragList, onClose, onConfirm }) {
+  const [selectedId, setSelectedId] = useState("");
+  const activeOppdrag = oppdragList.filter((o) => o.status !== "Levert/Godkjent");
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div className="bg-white rounded shadow-lg w-3/4 max-w-3xl p-6 overflow-auto max-h-[90vh]">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-bold">Opprett annonse</h3>
+          <button className="px-2 py-1 border rounded" onClick={onClose}>
+            Lukk
+          </button>
+        </div>
+
+        <div className="text-sm text-slate-600 mb-3">Velg et aktivt oppdrag som annonsen skal knyttes til.</div>
+
+        <div className="border rounded">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="p-3 text-left">Velg</th>
+                <th className="p-3 text-left">Navn</th>
+                <th className="p-3 text-left">Oppdrag</th>
+                <th className="p-3 text-left">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activeOppdrag.map((o) => (
+                <tr key={o.id} className="border-t hover:bg-slate-50">
+                  <td className="p-3">
+                    <input type="radio" name="oppdrag" checked={selectedId === o.id} onChange={() => setSelectedId(o.id)} />
+                  </td>
+                  <td className="p-3">
+                    {o.avdoede?.fornavn} {o.avdoede?.mellomnavn ? `${o.avdoede.mellomnavn} ` : ""}
+                    {o.avdoede?.etternavn}
+                  </td>
+                  <td className="p-3">{o.id}</td>
+                  <td className="p-3">{o.status}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button className="px-3 py-1 border rounded" onClick={onClose}>
+            Avbryt
+          </button>
+          <button className="px-3 py-1 bg-slate-800 text-white rounded" onClick={() => onConfirm(selectedId)} disabled={!selectedId}>
+            Bekreft og åpne editor
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChangePubliseringModal({ annonse, onClose, onSave }) {
+  const [dato, setDato] = useState(() => toDateInput(annonse.publisering));
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div className="bg-white rounded shadow-lg w-full max-w-md p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-bold">Endre publiseringsdato</h3>
+          <button className="px-2 py-1 border rounded" onClick={onClose}>
+            Lukk
+          </button>
+        </div>
+        <div className="text-sm text-slate-600 mb-3">{annonse.navn}</div>
+        <label className="text-sm block">Publiseringsdato</label>
+        <input type="date" className="w-full border p-2 rounded mt-1" value={dato} onChange={(e) => setDato(e.target.value)} />
+        <div className="mt-4 flex justify-end gap-2">
+          <button className="px-3 py-1 border rounded" onClick={onClose}>
+            Avbryt
+          </button>
+          <button className="px-3 py-1 bg-slate-800 text-white rounded" onClick={() => onSave(dato)}>
+            Lagre
+          </button>
         </div>
       </div>
     </div>
@@ -647,10 +1681,97 @@ function sampleOppdrag() {
   ];
 }
 
+function sampleAnnonser() {
+  return [
+    {
+      id: "19384",
+      leverandor: "Memcare",
+      type: "Død",
+      navn: "Reydun Wegner Lundekvam",
+      publisering: "2026-01-29T01:00:00",
+      opprettet: "2026-01-26T10:32:49",
+      endret: "2026-01-26T10:32:49",
+      publikasjon: "Marsteinen",
+      status: "I kø",
+    },
+    {
+      id: "19297",
+      leverandor: "Memcare",
+      type: "Død",
+      navn: "Arnulf Georg Gabrielsen",
+      publisering: "2026-01-28T01:00:00",
+      opprettet: "2026-01-25T01:00:01",
+      endret: "2026-01-25T01:00:01",
+      publikasjon: "Fædrelandsvennen",
+      status: "I kø",
+    },
+    {
+      id: "3048214",
+      leverandor: "Adstate",
+      type: "Død",
+      navn: "Ove Henning Berdahl",
+      publisering: "2026-01-26T01:00:00",
+      opprettet: "2026-01-26T00:02:24",
+      endret: "2026-01-26T10:32:27",
+      publikasjon: "Adresseavisen",
+      status: "I kø",
+    },
+    {
+      id: "3048316",
+      leverandor: "Adstate",
+      type: "Takk",
+      navn: "Mario V. Urquizo",
+      publisering: "2026-01-26T01:00:00",
+      opprettet: "2026-01-26T00:02:24",
+      endret: "2026-01-26T10:32:27",
+      publikasjon: "Agderposten",
+      status: "I kø",
+    },
+    {
+      id: "A-oppdrag-1",
+      leverandor: "Oppdrag",
+      type: "Død",
+      navn: "Kari Nordmann",
+      publisering: "2025-12-28T01:00:00",
+      opprettet: "2025-12-23T10:32:27",
+      endret: "2025-12-23T10:32:27",
+      publikasjon: "Adresseavisen",
+      status: "I kø",
+      oppdragId: "O-1a2b3c",
+      produsent: "torgeir.roness",
+    },
+  ];
+}
+
 function defaultAd() {
   return {
+    publication: "",
+    printDate: "",
+    digitalDate: "",
+    annonseType: "",
+    template: "",
     symbol: "✝",
+    symbolSize: 24,
+    intro: "",
     title: "",
+    firstName: "",
+    middleName: "",
+    lastName: "",
+    maidenName: "",
+    birthDate: "",
+    deathPlace: "",
+    deathDate: "",
+    deathFreeText: "",
+    verse1: "",
+    relativesRows: [{ id: "row-1", layout: "one", left: "", right: "" }],
+    verse2: "",
+    ceremonyInfo: "",
+    donations: "",
+    agency: "",
+    takkBody1: "",
+    takkBody2: "",
+    takkName: "",
+    takkSignature: "",
   };
 }
 
@@ -663,6 +1784,45 @@ function formatDate(iso) {
   } catch {
     return String(iso);
   }
+}
+
+function formatDateTime(iso) {
+  if (!iso) return "-";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString("no-NB", { dateStyle: "short", timeStyle: "short" });
+  } catch {
+    return String(iso);
+  }
+}
+
+function formatDeathLine(freeText, place, dateIso) {
+  const date = dateIso ? formatDate(dateIso) : "";
+  const placeDate = [place, date].filter(Boolean).join(", ");
+  const cleaned = freeText ? freeText.trim() : "";
+  if (!cleaned) return placeDate;
+  const suffix = /[.!?]$/.test(cleaned) ? "" : ".";
+  return [cleaned + suffix, placeDate].filter(Boolean).join(" ").trim();
+}
+
+function statusClass(status) {
+  if (status === "Godkjent") return "bg-green-100 text-green-700";
+  if (status === "I kø") return "bg-yellow-100 text-yellow-700";
+  if (status === "Sendt til godkjenning") return "bg-blue-100 text-blue-700";
+  return "bg-slate-100 text-slate-700";
+}
+
+function getPublications(annonser) {
+  const unique = new Set(annonser.map((a) => a.publikasjon).filter(Boolean));
+  return ["Alle", ...Array.from(unique)];
+}
+
+function toDateInput(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toISOString().slice(0, 10);
 }
 
 function deepClone(obj) {
@@ -707,3 +1867,4 @@ function getPrimaryLabel(oppdrag) {
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
+
