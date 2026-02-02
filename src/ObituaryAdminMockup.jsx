@@ -317,7 +317,7 @@ export default function ObituaryAdminMockup() {
           />
         )}
         {view === "statistikk" && <StatistikkView annonseList={annonseList} importLogs={importLogs} />}
-        {view === "admin" && <Placeholder title="Administrasjon" />}
+        {view === "admin" && <Placeholder title="Administrasjon" contentClass="font-semibold" />}
         {view === "forside" && <Placeholder title="Forside" />}
       </main>
 
@@ -2120,11 +2120,11 @@ function CreateEditOppdragModal({ onClose, onSave, oppdrag }) {
   );
 }
 
-function Placeholder({ title }) {
+function Placeholder({ title, contentClass }) {
   return (
     <div>
       <h3 className="text-2xl font-bold mb-4">{title}</h3>
-      <div className="bg-white border p-6 rounded font-semibold">Innhold kommer</div>
+      <div className={`bg-white border p-6 rounded ${contentClass || ""}`}>Innhold kommer</div>
     </div>
   );
 }
