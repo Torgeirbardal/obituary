@@ -12,13 +12,16 @@ export default function ObituaryAdminMockup() {
   const [view, setView] = useState("oppdrag"); // oppdrag | editor | annonser | import | statistikk | admin
   const [oppdragList, setOppdragList] = useState(sampleOppdrag());
   const [annonseList, setAnnonceList] = useState(sampleAnnonser());
+  const [importLogs, setImportLogs] = useState(sampleImportLogs());
   const [selectedOppdragId, setSelectedOppdragId] = useState(null);
   const [selectedAnnonceId, setSelectedAnnonceId] = useState(null);
+  const [selectedImportId, setSelectedImportId] = useState(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showCreateAnnonceModal, setShowCreateAnnonceModal] = useState(false);
   const [editingAnnonceDate, setEditingAnnonceDate] = useState(null);
   const [editingOppdrag, setEditingOppdrag] = useState(null);
   const currentUser = "torgeir.roness";
+  const [suggestionBank, setSuggestionBank] = useState(defaultSuggestionBank());
 
   // Kept for future editor work
   const [editorAd, setEditorAd] = useState(defaultAd());
@@ -214,6 +217,25 @@ export default function ObituaryAdminMockup() {
     );
   }
 
+  function addSuggestion(field, text) {
+    const cleaned = (text || "").trim();
+    if (!cleaned) return;
+    setSuggestionBank((prev) => {
+      const list = prev[field] || [];
+      const existing = list.find((i) => i.text.toLowerCase() === cleaned.toLowerCase());
+      if (existing) {
+        return {
+          ...prev,
+          [field]: list.map((i) => (i.text.toLowerCase() === cleaned.toLowerCase() ? { ...i, count: i.count + 1 } : i)),
+        };
+      }
+      return {
+        ...prev,
+        [field]: [...list, { text: cleaned, count: 1 }],
+      };
+    });
+  }
+
   const selectedOppdrag = oppdragList.find((o) => o.id === selectedOppdragId) || null;
 
   return (
@@ -254,6 +276,27 @@ export default function ObituaryAdminMockup() {
               markAnnonceSent();
               setView("annonser");
             }}
+            suggestionBank={suggestionBank}
+            onAddSuggestion={addSuggestion}
+            approvalMode={getSelectedAnnonceStatus(annonseList, selectedAnnonceId) === "Sendt til godkjenning"}
+            initialStep={getSelectedAnnonceStatus(annonseList, selectedAnnonceId) === "Sendt til godkjenning" ? 4 : 1}
+            rejectComment={getSelectedAnnonce(annonseList, selectedAnnonceId)?.rejectComment || ""}
+            onApproveOrder={() => {
+              setAnnonceList((s) =>
+                s.map((a) => (a.id === selectedAnnonceId ? { ...a, status: "Godkjent", endret: new Date().toISOString() } : a))
+              );
+              setView("annonser");
+            }}
+            onRejectOrder={(comment) => {
+              setAnnonceList((s) =>
+                s.map((a) =>
+                  a.id === selectedAnnonceId
+                    ? { ...a, status: "Ikke godkjent", endret: new Date().toISOString(), rejectComment: comment }
+                    : a
+                )
+              );
+              setView("annonser");
+            }}
           />
         )}
 
@@ -266,8 +309,14 @@ export default function ObituaryAdminMockup() {
             onEditDate={(annonce) => setEditingAnnonceDate(annonce)}
           />
         )}
-        {view === "import" && <Placeholder title="Importstatus" />}
-        {view === "statistikk" && <Placeholder title="Statistikk" />}
+        {view === "import" && (
+          <ImportStatusView
+            logs={importLogs}
+            selectedId={selectedImportId}
+            onSelect={(id) => setSelectedImportId((s) => (s === id ? null : id))}
+          />
+        )}
+        {view === "statistikk" && <StatistikkView annonseList={annonseList} importLogs={importLogs} />}
         {view === "admin" && <Placeholder title="Administrasjon" />}
         {view === "forside" && <Placeholder title="Forside" />}
       </main>
@@ -481,7 +530,8 @@ function AnnonserView({ annonseList, onCreate, onApprove, onEdit, onEditDate }) 
   const [dateTo, setDateTo] = useState("");
   const [publication, setPublication] = useState("Alle");
   const [annonseType, setAnnonceType] = useState("Alle");
-  const [onlyInQueue, setOnlyInQueue] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("Alle");
+  const [nearDeadlineOnly, setNearDeadlineOnly] = useState(false);
   const [openMenuId, setOpenMenuId] = useState(null);
 
   const publications = useMemo(() => getPublications(annonseList), [annonseList]);
@@ -493,8 +543,6 @@ function AnnonserView({ annonseList, onCreate, onApprove, onEdit, onEditDate }) 
         const haystack = `${a.id} ${a.navn} ${a.leverandor}`.toLowerCase();
         if (!haystack.includes(text)) return false;
       }
-
-      if (onlyInQueue && a.status !== "I kø") return false;
 
       const d = a.publisering ? new Date(a.publisering) : null;
       if (dateFrom && d) {
@@ -508,10 +556,20 @@ function AnnonserView({ annonseList, onCreate, onApprove, onEdit, onEditDate }) 
 
       if (publication !== "Alle" && a.publikasjon !== publication) return false;
       if (annonseType !== "Alle" && a.type !== annonseType) return false;
+      if (statusFilter !== "Alle" && a.status !== statusFilter) return false;
+
+      if (nearDeadlineOnly) {
+        const today = startOfDay(new Date());
+        const start = addBusinessDays(today, 1);
+        const cutoff = addBusinessDays(today, 2);
+        const publishDate = a.publisering ? startOfDay(new Date(a.publisering)) : null;
+        if (!publishDate) return false;
+        if (publishDate < start || publishDate > cutoff) return false;
+      }
 
       return true;
     });
-  }, [annonseList, searchText, dateFrom, dateTo, publication, annonseType, onlyInQueue]);
+  }, [annonseList, searchText, dateFrom, dateTo, publication, annonseType, statusFilter, nearDeadlineOnly]);
 
   return (
     <div>
@@ -568,10 +626,21 @@ function AnnonserView({ annonseList, onCreate, onApprove, onEdit, onEditDate }) 
             </select>
           </div>
 
-          <div className="col-span-7">
-            <label className="inline-flex items-center text-sm mt-2">
-              <input type="checkbox" className="mr-2" checked={onlyInQueue} onChange={(e) => setOnlyInQueue(e.target.checked)} />
-              <span>Vis bare annonser som er i kø</span>
+          <div className="col-span-2">
+            <label className="text-sm block">Status:</label>
+            <select className="w-full border p-2 rounded mt-1 text-sm" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="Alle">Alle</option>
+              <option value="I kø">I kø</option>
+              <option value="Sendt til godkjenning">Sendt til godkjenning</option>
+              <option value="Godkjent">Godkjent</option>
+              <option value="Ikke godkjent">Ikke godkjent</option>
+            </select>
+          </div>
+
+          <div className="col-span-12 mt-2">
+            <label className="inline-flex items-center text-sm">
+              <input type="checkbox" className="mr-2" checked={nearDeadlineOnly} onChange={(e) => setNearDeadlineOnly(e.target.checked)} />
+              <span>Vis bare annonser som er nær bestillingsfrist</span>
             </label>
           </div>
 
@@ -587,7 +656,8 @@ function AnnonserView({ annonseList, onCreate, onApprove, onEdit, onEditDate }) 
                 setDateTo("");
                 setPublication("Alle");
                 setAnnonceType("Alle");
-                setOnlyInQueue(false);
+                setStatusFilter("Alle");
+                setNearDeadlineOnly(false);
               }}
             >
               Fjern satte filter
@@ -624,7 +694,12 @@ function AnnonserView({ annonseList, onCreate, onApprove, onEdit, onEditDate }) 
                 <td className="p-3">{formatDateTime(a.endret)}</td>
                 <td className="p-3">{a.publikasjon}</td>
                 <td className="p-3">
-                  <span className={`px-2 py-0.5 rounded-full text-xs ${statusClass(a.status)}`}>{a.status}</span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-xs ${statusClass(a.status)}`}
+                    title={a.status === "Ikke godkjent" && a.rejectComment ? a.rejectComment : ""}
+                  >
+                    {a.status}
+                  </span>
                 </td>
                 <td className="p-3 text-right">
                   <div className="relative inline-block text-left">
@@ -692,25 +767,302 @@ function AnnonserView({ annonseList, onCreate, onApprove, onEdit, onEditDate }) 
   );
 }
 
-function EditorView({ oppdrag, ad, setAd, onBack, onDone }) {
+function ImportStatusView({ logs, selectedId, onSelect }) {
+  const [searchText, setSearchText] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+
+  const filtered = useMemo(() => {
+    return logs.filter((log) => {
+      if (searchText) {
+        const text = searchText.toLowerCase().trim();
+        const inFile = (log.fileUrl || "").toLowerCase().includes(text);
+        const inId = log.items?.some((i) => String(i.adId).toLowerCase().includes(text));
+        if (!inFile && !inId) return false;
+      }
+
+      const d = log.timestamp ? new Date(log.timestamp) : null;
+      if (dateFrom && d) {
+        const df = new Date(dateFrom);
+        if (d < df) return false;
+      }
+      if (dateTo && d) {
+        const dt = new Date(dateTo);
+        if (d > dt) return false;
+      }
+
+      return true;
+    });
+  }, [logs, searchText, dateFrom, dateTo]);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-2xl font-bold">Importstatus</h3>
+      </div>
+
+      <div className="bg-white border rounded p-4 mb-4">
+        <div className="grid grid-cols-12 gap-3 items-end">
+          <div className="col-span-6">
+            <label className="text-sm block">Søketekst:</label>
+            <input
+              className="w-full border p-2 rounded mt-1 text-sm"
+              placeholder="Søk etter annonse-ID eller logg-navn"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+            />
+          </div>
+
+          <div className="col-span-3">
+            <label className="text-sm block">Dato fra:</label>
+            <input type="date" className="w-full border p-2 rounded mt-1 text-sm" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          </div>
+          <div className="col-span-3">
+            <label className="text-sm block">Dato til:</label>
+            <input type="date" className="w-full border p-2 rounded mt-1 text-sm" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          </div>
+
+          <div className="col-span-12 text-right mt-2">
+            <button className="px-3 py-1 bg-slate-800 text-white rounded mr-2" onClick={() => {}}>
+              Søk i importlogger
+            </button>
+            <button
+              className="px-3 py-1 border rounded"
+              onClick={() => {
+                setSearchText("");
+                setDateFrom("");
+                setDateTo("");
+              }}
+            >
+              Fjern satte filter
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-center mb-4">
+        <div className="inline-flex border rounded overflow-hidden text-sm">
+          <button className="px-3 py-1 border-r text-slate-400" disabled>
+            &laquo;
+          </button>
+          <button className="px-3 py-1 border-r text-slate-400" disabled>
+            &lsaquo;
+          </button>
+          <button className="px-3 py-1 border-r bg-slate-100 font-semibold">1</button>
+          <button className="px-3 py-1 border-r">2</button>
+          <button className="px-3 py-1 border-r">3</button>
+          <button className="px-3 py-1 border-r">4</button>
+          <button className="px-3 py-1 border-r">5</button>
+          <button className="px-3 py-1 border-r">&rsaquo;</button>
+          <button className="px-3 py-1">&raquo;</button>
+        </div>
+      </div>
+
+      <div className="bg-white border rounded shadow-sm">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="p-3 text-left">Tidspunkt</th>
+              <th className="p-3 text-left">Fil/Url</th>
+              <th className="p-3">Status</th>
+              <th className="p-3">Antall annonser</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((log) => (
+              <React.Fragment key={log.id}>
+                <tr className="border-t hover:bg-slate-50 cursor-pointer" onClick={() => onSelect(log.id)}>
+                  <td className="p-3">{formatDateTime(log.timestamp)}</td>
+                  <td className="p-3">
+                    <div className="truncate max-w-[360px]">{log.fileUrl}</div>
+                  </td>
+                  <td className="p-3">
+                    <span className={`px-2 py-0.5 rounded-full text-xs ${statusClass(log.status)}`}>{log.status}</span>
+                  </td>
+                  <td className="p-3 text-center">{log.count}</td>
+                </tr>
+                {selectedId === log.id && (
+                  <tr className="border-t bg-slate-50">
+                    <td colSpan={4} className="p-4">
+                      <div className="bg-white border rounded">
+                        <table className="w-full text-sm">
+                          <thead className="bg-slate-100">
+                            <tr>
+                              <th className="p-3 text-left">Annonse ID</th>
+                              <th className="p-3 text-left">Type</th>
+                              <th className="p-3 text-left">Navn</th>
+                              <th className="p-3 text-left">Webpublisering</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {log.items.map((item) => (
+                              <tr key={item.adId} className="border-t">
+                                <td className="p-3">{item.adId}</td>
+                                <td className="p-3">{item.type}</td>
+                                <td className="p-3">{item.name}</td>
+                                <td className="p-3">{formatDateTime(item.webPublisering)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function StatistikkView({ annonseList, importLogs }) {
+  const [preset, setPreset] = useState("Siste 30 dager");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const now = new Date();
+  const { fromDate, toDate, label } = getPresetRange(preset, customFrom, customTo);
+  const filteredAds = filterByDateRange(annonseList, fromDate, toDate);
+  const statsRange = filteredAds.length;
+  const typeCounts = countBy(filteredAds, (a) => a.type || "Ukjent");
+  const supplierCounts = countBy(filteredAds, (a) => a.leverandor || "Ukjent");
+  const statusCounts = countBy(filteredAds, (a) => a.status || "Ukjent");
+  const topPublications = topN(countBy(filteredAds, (a) => a.publikasjon || "Ukjent"), 5);
+  const nearDeadlineNotApproved = annonseList.filter(
+    (a) => isWithinBusinessDays(a.publisering, 1, 2) && a.status !== "Godkjent"
+  ).length;
+  const importCount = importLogs.reduce((acc, l) => acc + (l.count || 0), 0);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-2xl font-bold">Statistikk</h3>
+        <div className="flex items-center gap-3">
+          <select className="border p-2 rounded text-sm" value={preset} onChange={(e) => setPreset(e.target.value)}>
+            <option>Denne uken</option>
+            <option>Denne måneden</option>
+            <option>Dette året</option>
+            <option>Siste uke</option>
+            <option>Siste 30 dager</option>
+            <option>Siste år</option>
+            <option>Egendefinert</option>
+          </select>
+          {preset === "Egendefinert" ? (
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                className="border p-2 rounded text-sm"
+                value={customFrom}
+                onChange={(e) => setCustomFrom(e.target.value)}
+              />
+              <span className="text-slate-400">–</span>
+              <input
+                type="date"
+                className="border p-2 rounded text-sm"
+                value={customTo}
+                onChange={(e) => setCustomTo(e.target.value)}
+              />
+            </div>
+          ) : null}
+          <div className="text-sm text-slate-600">Oppdatert {formatDateTime(now.toISOString())}</div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-12 gap-4 mb-6">
+        <StatCard title={label} subtitle={getRangeSubtitle(fromDate, toDate)} value={statsRange} />
+        <StatCard title="Importerte annonser" value={importCount} />
+      </div>
+
+      <div className="grid grid-cols-12 gap-4">
+        <div className="col-span-4 bg-white border rounded p-4">
+          <h4 className="font-semibold mb-3">Type</h4>
+          <StatList items={typeCounts} />
+        </div>
+        <div className="col-span-4 bg-white border rounded p-4">
+          <h4 className="font-semibold mb-3">Leverandør</h4>
+          <StatList items={supplierCounts} />
+        </div>
+        <div className="col-span-4 bg-white border rounded p-4">
+          <h4 className="font-semibold mb-3">Status</h4>
+          <StatList items={statusCounts} />
+        </div>
+        <div className="col-span-6 bg-white border rounded p-4">
+          <h4 className="font-semibold mb-3">Topp publikasjoner</h4>
+          <StatList items={topPublications} />
+        </div>
+        <div className="col-span-6 bg-white border rounded p-4">
+          <h4 className="font-semibold mb-3">Nær frist, ikke godkjent</h4>
+          <div className="text-sm text-slate-600 mb-2">
+            Annonser med publiseringsdato innen 2 virkedager som ikke er godkjent
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-3xl font-bold">{nearDeadlineNotApproved}</div>
+            <div className="text-sm text-slate-500">Siste 2 virkedager</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ title, value, subtitle }) {
+  return (
+    <div className="col-span-12 md:col-span-2 bg-white border rounded p-4">
+      <div className="text-xs text-slate-500">{title}</div>
+      {subtitle ? <div className="text-xs text-slate-400 mt-1">{subtitle}</div> : null}
+      <div className="text-2xl font-bold mt-1">{value}</div>
+    </div>
+  );
+}
+
+function StatList({ items }) {
+  return (
+    <ul className="text-sm space-y-2">
+      {items.map((item) => (
+        <li key={item.label} className="flex items-center justify-between">
+          <span className="text-slate-600">{item.label}</span>
+          <span className="font-semibold">{item.count}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function EditorView({
+  oppdrag,
+  ad,
+  setAd,
+  onBack,
+  onDone,
+  suggestionBank,
+  onAddSuggestion,
+  initialStep,
+  approvalMode,
+  onApproveOrder,
+  onRejectOrder,
+  rejectComment,
+}) {
   const [step, setStep] = useState(1);
   const [showSymbolBank, setShowSymbolBank] = useState(false);
   const [symbolSearch, setSymbolSearch] = useState("");
+  const [suggestionField, setSuggestionField] = useState(null);
+  const [suggestionSearch, setSuggestionSearch] = useState("");
+  const [rejectCommentText, setRejectCommentText] = useState("");
 
   useEffect(() => {
-    setStep(1);
-  }, [oppdrag?.id]);
+    setStep(initialStep || 1);
+  }, [oppdrag?.id, initialStep]);
 
   useEffect(() => {
     if (!ad.relativesRows || ad.relativesRows.length === 0) {
       setAd((prev) => ({
         ...prev,
-        relativesRows: [
-          { id: "row-1", layout: "one", left: prev.relativesSingle || "", right: "" },
-        ],
+        relativesRows: [{ id: "row-1", layout: "one", left: "", right: "" }],
       }));
     }
-  }, [ad.relativesRows, ad.relativesSingle, setAd]);
+  }, [ad.relativesRows, setAd]);
 
   if (!oppdrag) {
     return (
@@ -754,13 +1106,20 @@ function EditorView({ oppdrag, ad, setAd, onBack, onDone }) {
     );
   };
 
-  const verseSuggestions = ["Du gav oss så mye", "Takk for alt du var", "Minnene lever videre"];
   const symbolOptions = ["✝", "❦", "✶", "✜", "✟", "✙", "✞", "✤", "✧", "✿", "❀"];
   const filteredSymbols = symbolOptions.filter((s) => s.includes(symbolSearch.trim()));
 
   const fullName = [ad.firstName, ad.middleName, ad.lastName].filter(Boolean).join(" ").trim();
   const step1Valid = Boolean(ad.publication && ad.printDate && ad.digitalDate);
   const step2Valid = Boolean(ad.annonseType && ad.template);
+
+  const suggestionsForField = useMemo(() => {
+    if (!suggestionField) return [];
+    const list = suggestionBank?.[suggestionField] || [];
+    const needle = suggestionSearch.toLowerCase().trim();
+    const filtered = needle ? list.filter((i) => i.text.toLowerCase().includes(needle)) : list;
+    return [...filtered].sort((a, b) => b.count - a.count);
+  }, [suggestionBank, suggestionField, suggestionSearch]);
 
   function renderPreview() {
     if (ad.annonseType === "Takk") {
@@ -798,6 +1157,7 @@ function EditorView({ oppdrag, ad, setAd, onBack, onDone }) {
             f. {[ad.maidenName, ad.birthDate ? formatDate(ad.birthDate) : ""].filter(Boolean).join(" ")}
           </div>
         ) : null}
+        {ad.nickname ? <div className="text-sm mb-2">"{ad.nickname}"</div> : null}
         {ad.deathFreeText || ad.deathPlace || ad.deathDate ? (
           <div className="text-sm mb-3">
             {formatDeathLine(ad.deathFreeText, ad.deathPlace, ad.deathDate)}
@@ -808,6 +1168,21 @@ function EditorView({ oppdrag, ad, setAd, onBack, onDone }) {
           <div className="mb-3 text-sm space-y-2">
             {ad.relativesRows.map((row) => {
               if (row.layout === "empty") return <div key={row.id} className="h-3" />;
+              if (row.layout === "relation-one") {
+                return (
+                  <div key={row.id} className="text-xs text-slate-500 text-center">
+                    {row.left ? `(${row.left})` : ""}
+                  </div>
+                );
+              }
+              if (row.layout === "relation-two") {
+                return (
+                  <div key={row.id} className="grid grid-cols-2 gap-4 text-xs text-slate-500">
+                    <div>{row.left ? `(${row.left})` : ""}</div>
+                    <div>{row.right ? `(${row.right})` : ""}</div>
+                  </div>
+                );
+              }
               if (row.layout === "two") {
                 return (
                   <div key={row.id} className="grid grid-cols-2 gap-4">
@@ -827,7 +1202,7 @@ function EditorView({ oppdrag, ad, setAd, onBack, onDone }) {
         {ad.verse2 ? <div className="text-sm italic mb-3">{ad.verse2}</div> : null}
         {ad.ceremonyInfo ? <div className="text-sm mb-2">{ad.ceremonyInfo}</div> : null}
         {ad.donations ? <div className="text-sm mb-2">{ad.donations}</div> : null}
-        {ad.agency ? <div className="text-sm font-semibold">{ad.agency}</div> : null}
+        {ad.agency ? <div className="text-sm whitespace-pre-line">{ad.agency}</div> : null}
       </div>
     );
   }
@@ -843,10 +1218,7 @@ function EditorView({ oppdrag, ad, setAd, onBack, onDone }) {
             Editor â€” {oppdrag.avdoede?.fornavn} {oppdrag.avdoede?.etternavn}
           </span>
         </div>
-        <div className="flex items-center gap-3">
-          <button className="px-4 py-2 bg-white border rounded">Åpne PDF</button>
-          <button className="px-4 py-2 bg-green-600 text-white rounded">Godkjenn</button>
-        </div>
+        <div className="flex items-center gap-3" />
       </div>
 
       <div className="bg-white border rounded p-4 mb-4">
@@ -968,6 +1340,11 @@ function EditorView({ oppdrag, ad, setAd, onBack, onDone }) {
         <div className="grid grid-cols-12 gap-6">
           <div className="col-span-6 bg-white border rounded p-6">
             <h4 className="font-semibold mb-4">3. Innhold</h4>
+            {rejectComment ? (
+              <div className="mb-3 text-xs text-slate-500">
+                Kommentar ved avslag av annonse: {rejectComment}
+              </div>
+            ) : null}
             <div className="grid grid-cols-12 gap-3">
               <div className="col-span-6">
                 <label className="text-sm block">Symbol</label>
@@ -1031,15 +1408,21 @@ function EditorView({ oppdrag, ad, setAd, onBack, onDone }) {
                 </>
               ) : (
                 <>
-                  <div className="col-span-12">
-                    <label className="text-sm block">Innledning</label>
-                    <input
-                      className="w-full border p-2 rounded mt-1 text-sm"
-                      placeholder="F.eks. Vår alles kjære"
-                      value={ad.intro}
-                      onChange={(e) => setAd({ ...ad, intro: e.target.value })}
-                    />
-                  </div>
+              <div className="col-span-12">
+                <label className="text-sm block">Innledning</label>
+                <div className="flex gap-2 mt-1">
+                  <input
+                    className="w-full border p-2 rounded text-sm"
+                    placeholder="F.eks. Vår alles kjære"
+                    value={ad.intro}
+                    onChange={(e) => setAd({ ...ad, intro: e.target.value })}
+                    onBlur={() => onAddSuggestion?.("intro", ad.intro)}
+                  />
+                  <button className="px-3 py-1 border rounded text-sm" onClick={() => setSuggestionField("intro")}>
+                    Velg fra bank
+                  </button>
+                </div>
+              </div>
                   <div className="col-span-12">
                     <label className="text-sm block">Tittel</label>
                     <input
@@ -1066,6 +1449,10 @@ function EditorView({ oppdrag, ad, setAd, onBack, onDone }) {
                     <input className="w-full border p-2 rounded mt-1 text-sm" value={ad.maidenName} onChange={(e) => setAd({ ...ad, maidenName: e.target.value })} />
                   </div>
                   <div className="col-span-6">
+                    <label className="text-sm block">Kallenavn</label>
+                    <input className="w-full border p-2 rounded mt-1 text-sm" value={ad.nickname} onChange={(e) => setAd({ ...ad, nickname: e.target.value })} />
+                  </div>
+                  <div className="col-span-6">
                     <label className="text-sm block">Fødselsdato</label>
                     <input type="date" className="w-full border p-2 rounded mt-1 text-sm" value={ad.birthDate} onChange={(e) => setAd({ ...ad, birthDate: e.target.value })} />
                   </div>
@@ -1086,20 +1473,21 @@ function EditorView({ oppdrag, ad, setAd, onBack, onDone }) {
                     <label className="text-sm block">Dødsdato</label>
                     <input type="date" className="w-full border p-2 rounded mt-1 text-sm" value={ad.deathDate} onChange={(e) => setAd({ ...ad, deathDate: e.target.value })} />
                   </div>
-                  <div className="col-span-12">
-                    <label className="text-sm block">Vers 1</label>
-                    <textarea className="w-full border p-2 rounded mt-1 text-sm" rows={2} value={ad.verse1} onChange={(e) => setAd({ ...ad, verse1: e.target.value })} />
-                    <div className="mt-2">
-                      <select className="border p-2 rounded text-sm" value="" onChange={(e) => setAd({ ...ad, verse1: e.target.value })}>
-                        <option value="">Velg tidligere vers</option>
-                        {verseSuggestions.map((v) => (
-                          <option key={v} value={v}>
-                            {v}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
+              <div className="col-span-12">
+                <label className="text-sm block">Vers 1</label>
+                <textarea
+                  className="w-full border p-2 rounded mt-1 text-sm"
+                  rows={2}
+                  value={ad.verse1}
+                  onChange={(e) => setAd({ ...ad, verse1: e.target.value })}
+                  onBlur={() => onAddSuggestion?.("verse1", ad.verse1)}
+                />
+                <div className="mt-2 flex gap-2">
+                  <button className="px-3 py-1 border rounded text-sm" onClick={() => setSuggestionField("verse1")}>
+                    Velg fra bank
+                  </button>
+                </div>
+              </div>
                   <div className="col-span-12">
                     <label className="text-sm block">Pårørende</label>
                     <div className="text-xs text-slate-500 mt-1">
@@ -1118,37 +1506,45 @@ function EditorView({ oppdrag, ad, setAd, onBack, onDone }) {
                                 setAd({ ...ad, relativesRows: next });
                               }}
                             >
-                              <option value="one">1 kolonne</option>
-                              <option value="two">2 kolonner</option>
-                              <option value="empty">Tom rad</option>
-                            </select>
-                          </div>
-                          <div className="col-span-4">
-                            <input
-                              className="w-full border p-2 rounded text-sm"
-                              placeholder="Frank"
-                              value={row.left || ""}
-                              disabled={row.layout === "empty"}
-                              onChange={(e) => {
-                                const next = [...ad.relativesRows];
-                                next[idx] = { ...row, left: e.target.value };
-                                setAd({ ...ad, relativesRows: next });
-                              }}
-                            />
-                          </div>
-                          <div className="col-span-4">
-                            <input
-                              className="w-full border p-2 rounded text-sm"
-                              placeholder="Marit"
-                              value={row.right || ""}
-                              disabled={row.layout !== "two"}
-                              onChange={(e) => {
-                                const next = [...ad.relativesRows];
-                                next[idx] = { ...row, right: e.target.value };
-                                setAd({ ...ad, relativesRows: next });
-                              }}
-                            />
-                          </div>
+                          <option value="one">1 kolonne</option>
+                          <option value="two">2 kolonner</option>
+                          <option value="relation-one">Relasjon 1 kolonne</option>
+                          <option value="relation-two">Relasjon 2 kolonner</option>
+                          <option value="empty">Tom rad</option>
+                        </select>
+                      </div>
+                      <div className="col-span-4">
+                        <input
+                          className={`w-full border p-2 rounded ${row.layout.startsWith("relation") ? "text-xs" : "text-sm"}`}
+                          placeholder={
+                            row.layout === "relation-one"
+                              ? "f.eks. kone"
+                              : row.layout === "relation-two"
+                              ? "f.eks. datter"
+                              : ""
+                          }
+                          value={row.left || ""}
+                          disabled={row.layout === "empty"}
+                          onChange={(e) => {
+                            const next = [...ad.relativesRows];
+                            next[idx] = { ...row, left: e.target.value };
+                            setAd({ ...ad, relativesRows: next });
+                          }}
+                        />
+                      </div>
+                      <div className="col-span-4">
+                        <input
+                          className={`w-full border p-2 rounded ${row.layout.startsWith("relation") ? "text-xs" : "text-sm"}`}
+                          placeholder={row.layout === "relation-two" ? "f.eks. svigersønn" : ""}
+                          value={row.right || ""}
+                          disabled={row.layout !== "two" && row.layout !== "relation-two"}
+                          onChange={(e) => {
+                            const next = [...ad.relativesRows];
+                            next[idx] = { ...row, right: e.target.value };
+                            setAd({ ...ad, relativesRows: next });
+                          }}
+                        />
+                      </div>
                           <div className="col-span-1 text-right">
                             <button
                               className="px-2 py-1 border rounded"
@@ -1164,33 +1560,46 @@ function EditorView({ oppdrag, ad, setAd, onBack, onDone }) {
                       ))}
                     </div>
                     <div className="mt-2 flex gap-2">
-                      <button
-                        className="px-3 py-1 border rounded"
-                        onClick={() =>
-                          setAd({
-                            ...ad,
-                            relativesRows: [...(ad.relativesRows || []), { id: `row-${Date.now()}`, layout: "one", left: "", right: "" }],
-                          })
-                        }
-                      >
-                        Legg til 1 kolonne
-                      </button>
-                      <button
-                        className="px-3 py-1 border rounded"
-                        onClick={() =>
-                          setAd({
-                            ...ad,
-                            relativesRows: [...(ad.relativesRows || []), { id: `row-${Date.now()}`, layout: "two", left: "", right: "" }],
-                          })
-                        }
-                      >
-                        Legg til 2 kolonner
-                      </button>
-                      <button
-                        className="px-3 py-1 border rounded"
-                        onClick={() =>
-                          setAd({
-                            ...ad,
+                  <button
+                    className="px-3 py-1 border rounded"
+                    onClick={() =>
+                      setAd({
+                        ...ad,
+                        relativesRows: [...(ad.relativesRows || []), { id: `row-${Date.now()}`, layout: "one", left: "", right: "" }],
+                      })
+                    }
+                  >
+                    Legg til 1 kolonne
+                  </button>
+                  <button
+                    className="px-3 py-1 border rounded"
+                    onClick={() =>
+                      setAd({
+                        ...ad,
+                        relativesRows: [...(ad.relativesRows || []), { id: `row-${Date.now()}`, layout: "two", left: "", right: "" }],
+                      })
+                    }
+                  >
+                    Legg til 2 kolonner
+                  </button>
+                  <button
+                    className="px-3 py-1 border rounded"
+                    onClick={() => {
+                      const prev = ad.relativesRows?.[ad.relativesRows.length - 1];
+                      const layout = prev && (prev.layout === "two" || prev.layout === "relation-two") ? "relation-two" : "relation-one";
+                      setAd({
+                        ...ad,
+                        relativesRows: [...(ad.relativesRows || []), { id: `row-${Date.now()}`, layout, left: "", right: "" }],
+                      });
+                    }}
+                  >
+                    Legg til relasjon
+                  </button>
+                  <button
+                    className="px-3 py-1 border rounded"
+                    onClick={() =>
+                      setAd({
+                        ...ad,
                             relativesRows: [...(ad.relativesRows || []), { id: `row-${Date.now()}`, layout: "empty", left: "", right: "" }],
                           })
                         }
@@ -1199,31 +1608,60 @@ function EditorView({ oppdrag, ad, setAd, onBack, onDone }) {
                       </button>
                     </div>
                   </div>
-                  <div className="col-span-12">
-                    <label className="text-sm block">Vers 2</label>
-                    <textarea className="w-full border p-2 rounded mt-1 text-sm" rows={2} value={ad.verse2} onChange={(e) => setAd({ ...ad, verse2: e.target.value })} />
-                    <div className="mt-2">
-                      <select className="border p-2 rounded text-sm" value="" onChange={(e) => setAd({ ...ad, verse2: e.target.value })}>
-                        <option value="">Velg tidligere vers</option>
-                        {verseSuggestions.map((v) => (
-                          <option key={v} value={v}>
-                            {v}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                  <div className="col-span-12">
-                    <label className="text-sm block">Informasjon om seremonitid og sted</label>
-                    <textarea className="w-full border p-2 rounded mt-1 text-sm" rows={2} value={ad.ceremonyInfo} onChange={(e) => setAd({ ...ad, ceremonyInfo: e.target.value })} />
-                  </div>
-                  <div className="col-span-12">
-                    <label className="text-sm block">Informasjon om gaver/donasjoner</label>
-                    <textarea className="w-full border p-2 rounded mt-1 text-sm" rows={2} value={ad.donations} onChange={(e) => setAd({ ...ad, donations: e.target.value })} />
-                  </div>
+              <div className="col-span-12">
+                <label className="text-sm block">Vers 2</label>
+                <textarea
+                  className="w-full border p-2 rounded mt-1 text-sm"
+                  rows={2}
+                  value={ad.verse2}
+                  onChange={(e) => setAd({ ...ad, verse2: e.target.value })}
+                  onBlur={() => onAddSuggestion?.("verse2", ad.verse2)}
+                />
+                <div className="mt-2 flex gap-2">
+                  <button className="px-3 py-1 border rounded text-sm" onClick={() => setSuggestionField("verse2")}>
+                    Velg fra bank
+                  </button>
+                </div>
+              </div>
+              <div className="col-span-12">
+                <label className="text-sm block">Informasjon om seremonitid og sted</label>
+                <div className="flex gap-2 mt-1">
+                  <textarea
+                    className="w-full border p-2 rounded text-sm"
+                    rows={2}
+                    value={ad.ceremonyInfo}
+                    onChange={(e) => setAd({ ...ad, ceremonyInfo: e.target.value })}
+                    onBlur={() => onAddSuggestion?.("ceremonyInfo", ad.ceremonyInfo)}
+                  />
+                  <button className="px-3 py-1 border rounded text-sm" onClick={() => setSuggestionField("ceremonyInfo")}>
+                    Velg fra bank
+                  </button>
+                </div>
+              </div>
+              <div className="col-span-12">
+                <label className="text-sm block">Informasjon om gaver/donasjoner</label>
+                <div className="flex gap-2 mt-1">
+                  <textarea
+                    className="w-full border p-2 rounded text-sm"
+                    rows={2}
+                    placeholder="F.eks. Like kjært som blomster er"
+                    value={ad.donations}
+                    onChange={(e) => setAd({ ...ad, donations: e.target.value })}
+                    onBlur={() => onAddSuggestion?.("donations", ad.donations)}
+                  />
+                  <button className="px-3 py-1 border rounded text-sm" onClick={() => setSuggestionField("donations")}>
+                    Velg fra bank
+                  </button>
+                </div>
+              </div>
                   <div className="col-span-6">
                     <label className="text-sm block">Byrånavn</label>
-                    <input className="w-full border p-2 rounded mt-1 text-sm" value={ad.agency} onChange={(e) => setAd({ ...ad, agency: e.target.value })} />
+                    <textarea
+                      className="w-full border p-2 rounded mt-1 text-sm"
+                      rows={2}
+                      value={ad.agency}
+                      onChange={(e) => setAd({ ...ad, agency: e.target.value })}
+                    />
                   </div>
                 </>
               )}
@@ -1267,15 +1705,48 @@ function EditorView({ oppdrag, ad, setAd, onBack, onDone }) {
                 <span className="text-slate-600">Totalbeløp inkl. mva:</span> -
               </div>
             </div>
-            <button
-              className="mt-6 w-full bg-slate-800 text-white py-2 rounded"
-              onClick={() => {
-                alert("Din bestilling er sendt til godkjenning. Du vil få e-post når mediehuset har godkjent bestillingen");
-                onDone?.();
-              }}
-            >
-              Send bestilling
-            </button>
+            {approvalMode ? (
+              <div className="mt-6 space-y-2">
+                <button
+                  className="w-full bg-green-600 text-white py-2 rounded"
+                  onClick={() => onApproveOrder?.()}
+                >
+                  Godkjenn bestilling
+                </button>
+                <button
+                  className="w-full bg-red-600 text-white py-2 rounded"
+                  onClick={() => {
+                    if (!rejectCommentText.trim()) {
+                      alert("Legg til kommentar før du avslår bestillingen.");
+                      return;
+                    }
+                    onRejectOrder?.(rejectCommentText.trim());
+                  }}
+                >
+                  Avslå bestilling med kommentar
+                </button>
+                <textarea
+                  className="w-full border p-2 rounded text-sm"
+                  rows={2}
+                  placeholder="Kommentar til bestiller"
+                  value={rejectCommentText}
+                  onChange={(e) => setRejectCommentText(e.target.value)}
+                />
+                <button className="w-full border py-2 rounded" onClick={() => setStep(1)}>
+                  Endre annonse
+                </button>
+              </div>
+            ) : (
+              <button
+                className="mt-6 w-full bg-slate-800 text-white py-2 rounded"
+                onClick={() => {
+                  alert("Din bestilling er sendt til godkjenning. Du vil få e-post når mediehuset har godkjent bestillingen");
+                  onDone?.();
+                }}
+              >
+                Send bestilling
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1304,6 +1775,55 @@ function EditorView({ oppdrag, ad, setAd, onBack, onDone }) {
                   {s}
                 </button>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {suggestionField && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded shadow-lg w-full max-w-lg p-6">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-lg font-bold">Velg tidligere tekst</h3>
+              <button
+                className="px-2 py-1 border rounded"
+                onClick={() => {
+                  setSuggestionField(null);
+                  setSuggestionSearch("");
+                }}
+              >
+                Lukk
+              </button>
+            </div>
+            <input
+              className="w-full border p-2 rounded text-sm mb-3"
+              placeholder="Søk i tekstbank"
+              value={suggestionSearch}
+              onChange={(e) => setSuggestionSearch(e.target.value)}
+            />
+            <div className="max-h-64 overflow-auto border rounded">
+              {suggestionsForField.length === 0 ? (
+                <div className="p-3 text-sm text-slate-500">Ingen lagrede forslag ennå.</div>
+              ) : (
+                <ul>
+                  {suggestionsForField.map((item) => (
+                    <li key={item.text} className="border-b last:border-b-0">
+                      <button
+                        className="w-full text-left p-3 hover:bg-slate-50"
+                        onClick={() => {
+                          setAd({ ...ad, [suggestionField]: item.text });
+                          onAddSuggestion?.(suggestionField, item.text);
+                          setSuggestionField(null);
+                          setSuggestionSearch("");
+                        }}
+                      >
+                        <div className="text-sm">{item.text}</div>
+                        <div className="text-xs text-slate-400">Brukt {item.count} ganger</div>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         </div>
@@ -1604,7 +2124,7 @@ function Placeholder({ title }) {
   return (
     <div>
       <h3 className="text-2xl font-bold mb-4">{title}</h3>
-      <div className="bg-white border p-6 rounded">Innhold kommer</div>
+      <div className="bg-white border p-6 rounded font-semibold">Innhold kommer</div>
     </div>
   );
 }
@@ -1743,12 +2263,72 @@ function sampleAnnonser() {
   ];
 }
 
+function defaultSuggestionBank() {
+  return {
+    intro: [
+      { text: "Vår alles kjære", count: 5 },
+      { text: "Kjære", count: 2 },
+    ],
+    verse1: [
+      { text: "Du gav oss så mye", count: 7 },
+      { text: "Takk for alt du var", count: 4 },
+    ],
+    verse2: [
+      { text: "Minnene lever videre", count: 3 },
+    ],
+    ceremonyInfo: [
+      { text: "Seremoni i Trondheim domkirke", count: 2 },
+      { text: "Bisettelse i Lademoen kirke", count: 1 },
+    ],
+    donations: [
+      { text: "Like kjært som blomster er en gave til kreftforeningen", count: 3 },
+      { text: "Minnegave til kirkens bymisjon", count: 1 },
+    ],
+  };
+}
+
+function sampleImportLogs() {
+  return [
+    {
+      id: "log-1",
+      timestamp: "2026-01-27T10:14:01",
+      fileUrl: "3048922-2-kill.xml",
+      status: "success",
+      count: 1,
+      items: [
+        { adId: "3048897", type: "Død", name: "Rigmor Pettersen", webPublisering: "2026-01-26T01:00:00" },
+      ],
+    },
+    {
+      id: "log-2",
+      timestamp: "2026-01-27T10:03:03",
+      fileUrl: "2026-01-27-10-00-08-ad_list.xml",
+      status: "success",
+      count: 447,
+      items: [
+        { adId: "3048891", type: "Død", name: "Jan Erik Olsen", webPublisering: "2026-01-27T01:00:00" },
+        { adId: "3048892", type: "Takk", name: "Sigrid Løken", webPublisering: "2026-01-27T01:00:00" },
+      ],
+    },
+    {
+      id: "log-3",
+      timestamp: "2026-01-27T09:36:05",
+      fileUrl: "https://core.prod.memcare.com/api/v2/public/address...",
+      status: "success",
+      count: 19,
+      items: [
+        { adId: "3048810", type: "Død", name: "Ellen Skaare", webPublisering: "2026-01-27T01:00:00" },
+      ],
+    },
+  ];
+}
+
 function defaultAd() {
   return {
     publication: "",
     printDate: "",
     digitalDate: "",
-    annonseType: "",
+    annonseType: "Død",
     template: "",
     symbol: "✝",
     symbolSize: 24,
@@ -1758,6 +2338,7 @@ function defaultAd() {
     middleName: "",
     lastName: "",
     maidenName: "",
+    nickname: "",
     birthDate: "",
     deathPlace: "",
     deathDate: "",
@@ -1797,6 +2378,32 @@ function formatDateTime(iso) {
   }
 }
 
+function startOfDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addBusinessDays(fromDate, days) {
+  let count = 0;
+  const d = new Date(fromDate);
+  while (count < days) {
+    d.setDate(d.getDate() + 1);
+    const day = d.getDay();
+    if (day !== 0 && day !== 6) {
+      count += 1;
+    }
+  }
+  return d;
+}
+
+function isWithinBusinessDays(iso, startDays, endDays) {
+  if (!iso) return false;
+  const today = startOfDay(new Date());
+  const start = addBusinessDays(today, startDays);
+  const end = addBusinessDays(today, endDays);
+  const d = startOfDay(new Date(iso));
+  return d >= start && d <= end;
+}
+
 function formatDeathLine(freeText, place, dateIso) {
   const date = dateIso ? formatDate(dateIso) : "";
   const placeDate = [place, date].filter(Boolean).join(", ");
@@ -1810,12 +2417,101 @@ function statusClass(status) {
   if (status === "Godkjent") return "bg-green-100 text-green-700";
   if (status === "I kø") return "bg-yellow-100 text-yellow-700";
   if (status === "Sendt til godkjenning") return "bg-blue-100 text-blue-700";
+  if (status === "Ikke godkjent") return "bg-red-100 text-red-700";
   return "bg-slate-100 text-slate-700";
+}
+
+function getSelectedAnnonceStatus(annonser, selectedId) {
+  if (!selectedId) return "";
+  const a = annonser.find((x) => x.id === selectedId);
+  return a ? a.status : "";
+}
+
+function getSelectedAnnonce(annonser, selectedId) {
+  if (!selectedId) return null;
+  return annonser.find((x) => x.id === selectedId) || null;
 }
 
 function getPublications(annonser) {
   const unique = new Set(annonser.map((a) => a.publikasjon).filter(Boolean));
   return ["Alle", ...Array.from(unique)];
+}
+
+function countBy(list, getKey) {
+  const map = new Map();
+  list.forEach((item) => {
+    const key = getKey(item);
+    map.set(key, (map.get(key) || 0) + 1);
+  });
+  return Array.from(map.entries()).map(([label, count]) => ({ label, count }));
+}
+
+function topN(items, n) {
+  return [...items].sort((a, b) => b.count - a.count).slice(0, n);
+}
+
+function countLastDays(annonser, days) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days);
+  return annonser.filter((a) => {
+    const d = a.opprettet ? new Date(a.opprettet) : null;
+    return d && d >= cutoff;
+  }).length;
+}
+
+function getPresetRange(preset, customFrom, customTo) {
+  const today = startOfDay(new Date());
+  if (preset === "Denne uken") {
+    const start = new Date(today);
+    const day = start.getDay();
+    const diff = day === 0 ? 6 : day - 1;
+    start.setDate(start.getDate() - diff);
+    return { fromDate: start, toDate: today, label: "Denne uken" };
+  }
+  if (preset === "Denne måneden") {
+    const start = new Date(today.getFullYear(), today.getMonth(), 1);
+    return { fromDate: start, toDate: today, label: "Denne måneden" };
+  }
+  if (preset === "Dette året") {
+    const start = new Date(today.getFullYear(), 0, 1);
+    return { fromDate: start, toDate: today, label: "Dette året" };
+  }
+  if (preset === "Siste uke") {
+    const from = new Date(today);
+    from.setDate(from.getDate() - 7);
+    return { fromDate: from, toDate: today, label: "Siste uke" };
+  }
+  if (preset === "Siste 30 dager") {
+    const from = new Date(today);
+    from.setDate(from.getDate() - 30);
+    return { fromDate: from, toDate: today, label: "Siste 30 dager" };
+  }
+  if (preset === "Siste år") {
+    const from = new Date(today);
+    from.setDate(from.getDate() - 365);
+    return { fromDate: from, toDate: today, label: "Siste år" };
+  }
+  const fromDate = customFrom ? startOfDay(new Date(customFrom)) : null;
+  const toDate = customTo ? startOfDay(new Date(customTo)) : null;
+  return { fromDate, toDate, label: "Egendefinert" };
+}
+
+function filterByDateRange(list, fromDate, toDate) {
+  return list.filter((a) => {
+    const d = a.opprettet ? new Date(a.opprettet) : null;
+    if (!d) return false;
+    if (fromDate && d < fromDate) return false;
+    if (toDate && d > toDate) return false;
+    return true;
+  });
+}
+
+function getRangeSubtitle(fromDate, toDate) {
+  if (!fromDate && !toDate) return "";
+  const from = fromDate ? formatDate(fromDate.toISOString()) : "";
+  const to = toDate ? formatDate(toDate.toISOString()) : "";
+  if (from && to) return `${from} – ${to}`;
+  return from || to;
 }
 
 function toDateInput(iso) {
