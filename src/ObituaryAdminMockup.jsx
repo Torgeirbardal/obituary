@@ -15,6 +15,7 @@ export default function ObituaryAdminMockup() {
   const [importLogs, setImportLogs] = useState(sampleImportLogs());
   const [selectedOppdragId, setSelectedOppdragId] = useState(null);
   const [selectedAnnonceId, setSelectedAnnonceId] = useState(null);
+  const [selectedExternalAnnonceId, setSelectedExternalAnnonceId] = useState(null);
   const [selectedImportId, setSelectedImportId] = useState(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showCreateAnnonceModal, setShowCreateAnnonceModal] = useState(false);
@@ -22,6 +23,8 @@ export default function ObituaryAdminMockup() {
   const [editingOppdrag, setEditingOppdrag] = useState(null);
   const currentUser = "torgeir.roness";
   const [suggestionBank, setSuggestionBank] = useState(defaultSuggestionBank());
+  const [symbolLibrary, setSymbolLibrary] = useState(defaultSymbolLibrary());
+  const [templateConfig, setTemplateConfig] = useState(defaultTemplateConfig());
 
   // Kept for future editor work
   const [editorAd, setEditorAd] = useState(defaultAd());
@@ -237,6 +240,7 @@ export default function ObituaryAdminMockup() {
   }
 
   const selectedOppdrag = oppdragList.find((o) => o.id === selectedOppdragId) || null;
+  const selectedExternalAnnonce = annonseList.find((a) => a.id === selectedExternalAnnonceId) || null;
 
   return (
     <div className="h-screen flex bg-gray-50 text-slate-800">
@@ -297,6 +301,8 @@ export default function ObituaryAdminMockup() {
               );
               setView("annonser");
             }}
+            symbolLibrary={symbolLibrary}
+            templateConfig={templateConfig}
           />
         )}
 
@@ -306,6 +312,10 @@ export default function ObituaryAdminMockup() {
             onCreate={() => setShowCreateAnnonceModal(true)}
             onApprove={(id) => approveAnnonce(id)}
             onEdit={(annonce) => openEditorForAnnonce(annonce)}
+            onOpenExternal={(annonce) => {
+              setSelectedExternalAnnonceId(annonce.id);
+              setView("external-annonce");
+            }}
             onEditDate={(annonce) => setEditingAnnonceDate(annonce)}
           />
         )}
@@ -317,7 +327,39 @@ export default function ObituaryAdminMockup() {
           />
         )}
         {view === "statistikk" && <StatistikkView annonseList={annonseList} importLogs={importLogs} />}
-        {view === "admin" && <Placeholder title="Administrasjon" contentClass="font-semibold" />}
+        {view === "admin" && (
+          <AdminUsersView
+            currentUser={currentUser}
+            symbolLibrary={symbolLibrary}
+            setSymbolLibrary={setSymbolLibrary}
+            templateConfig={templateConfig}
+            setTemplateConfig={setTemplateConfig}
+          />
+        )}
+        {view === "external-annonce" && (
+          <ExternalAnnonceDetailView
+            annonce={selectedExternalAnnonce}
+            onBack={() => setView("annonser")}
+            onApprove={() => {
+              if (!selectedExternalAnnonce) return;
+              setAnnonceList((s) =>
+                s.map((a) => (a.id === selectedExternalAnnonce.id ? { ...a, status: "Godkjent", endret: new Date().toISOString() } : a))
+              );
+              setView("annonser");
+            }}
+            onReject={(comment) => {
+              if (!selectedExternalAnnonce) return;
+              setAnnonceList((s) =>
+                s.map((a) =>
+                  a.id === selectedExternalAnnonce.id
+                    ? { ...a, status: "Ikke godkjent", endret: new Date().toISOString(), rejectComment: comment }
+                    : a
+                )
+              );
+              setView("annonser");
+            }}
+          />
+        )}
         {view === "forside" && <Placeholder title="Forside" />}
       </main>
 
@@ -524,7 +566,7 @@ function OppdragView({ oppdragList, onOpen, onEdit, onDelete, onCreate }) {
   );
 }
 
-function AnnonserView({ annonseList, onCreate, onApprove, onEdit, onEditDate }) {
+function AnnonserView({ annonseList, onCreate, onApprove, onEdit, onOpenExternal, onEditDate }) {
   const [searchText, setSearchText] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -684,7 +726,17 @@ function AnnonserView({ annonseList, onCreate, onApprove, onEdit, onEditDate }) 
           </thead>
           <tbody>
             {filtered.map((a) => (
-              <tr key={a.id} className="border-t hover:bg-slate-50 cursor-pointer" onClick={() => onEdit(a)}>
+              <tr
+                key={a.id}
+                className="border-t hover:bg-slate-50 cursor-pointer"
+                onClick={() => {
+                  if (a.leverandor && a.leverandor !== "Oppdrag") {
+                    onOpenExternal?.(a);
+                  } else {
+                    onEdit(a);
+                  }
+                }}
+              >
                 <td className="p-3">{a.id}</td>
                 <td className="p-3">{a.leverandor}</td>
                 <td className="p-3">{a.type}</td>
@@ -729,7 +781,11 @@ function AnnonserView({ annonseList, onCreate, onApprove, onEdit, onEditDate }) 
                           onClick={(e) => {
                             e.stopPropagation();
                             setOpenMenuId(null);
-                            onEdit(a);
+                            if (a.leverandor && a.leverandor !== "Oppdrag") {
+                              onOpenExternal?.(a);
+                            } else {
+                              onEdit(a);
+                            }
                           }}
                         >
                           Rediger
@@ -763,6 +819,107 @@ function AnnonserView({ annonseList, onCreate, onApprove, onEdit, onEditDate }) 
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function ExternalAnnonceDetailView({ annonce, onBack, onApprove, onReject }) {
+  const [rejectComment, setRejectComment] = useState("");
+
+  if (!annonce) {
+    return (
+      <div>
+        <button className="mb-4 px-3 py-1 border rounded" onClick={onBack}>
+          Tilbake
+        </button>
+        <div className="bg-white border rounded p-6">Ingen annonse valgt.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <button className="px-3 py-1 border rounded mr-2" onClick={onBack}>
+            Tilbake
+          </button>
+          <span className="text-lg font-bold">{annonce.id}</span>
+          <span className="text-sm text-slate-500 ml-2">{annonce.leverandor}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`px-2 py-0.5 rounded-full text-xs ${statusClass(annonce.status)}`}>
+            {annonce.status}
+          </span>
+          <button className="px-3 py-1 border rounded" onClick={() => alert("PDF lastes ned (mock).")}>
+            Last ned PDF
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-12 gap-6">
+        <div className="col-span-12 lg:col-span-7">
+          <div className="bg-white border rounded p-4 mb-4">
+            <div className="text-sm text-slate-600 mb-2">Rådata</div>
+            <pre className="text-xs bg-slate-50 border rounded p-3 max-h-[520px] overflow-auto whitespace-pre-wrap">
+              {annonce.rawData || sampleRawData(annonce)}
+            </pre>
+          </div>
+        </div>
+
+        <div className="col-span-12 lg:col-span-5">
+          <div className="bg-white border rounded p-4 mb-4">
+            <div className="text-sm text-slate-600 mb-2">PDF preview</div>
+            <div className="border rounded bg-slate-50 p-4 flex items-center justify-center h-64 text-slate-400 text-sm">
+              PDF forhåndsvisning (mock)
+            </div>
+          </div>
+
+          <div className="bg-white border rounded p-4 mb-4">
+            <div className="text-sm text-slate-600 mb-2">Digitalvisning</div>
+            <div className="border rounded bg-white p-4">
+              <ExternalAnnoncePreview annonce={annonce} />
+            </div>
+          </div>
+
+          <div className="bg-white border rounded p-4">
+            <div className="text-sm text-slate-600 mb-2">Godkjenning</div>
+            <button className="w-full bg-green-600 text-white py-2 rounded mb-2" onClick={onApprove}>
+              Godkjenn annonse
+            </button>
+            <button
+              className="w-full bg-red-600 text-white py-2 rounded mb-2"
+              onClick={() => {
+                if (!rejectComment.trim()) {
+                  alert("Legg til kommentar før du underkjenner.");
+                  return;
+                }
+                onReject?.(rejectComment.trim());
+              }}
+            >
+              Underkjenn annonse
+            </button>
+            <textarea
+              className="w-full border p-2 rounded text-sm"
+              rows={2}
+              placeholder="Kommentar ved underkjenning"
+              value={rejectComment}
+              onChange={(e) => setRejectComment(e.target.value)}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExternalAnnoncePreview({ annonce }) {
+  return (
+    <div className="border-2 border-slate-300 rounded p-4 text-center bg-white">
+      <div className="text-xs text-slate-500 mb-2">{annonce.publikasjon || "Publikasjon"}</div>
+      <div className="text-sm italic mb-2">Vår kjære</div>
+      <div className="text-lg font-semibold">{annonce.navn || "Navn"}</div>
+      <div className="text-xs text-slate-500 mt-2">{formatDateTime(annonce.publisering)}</div>
     </div>
   );
 }
@@ -1043,6 +1200,8 @@ function EditorView({
   onApproveOrder,
   onRejectOrder,
   rejectComment,
+  symbolLibrary,
+  templateConfig,
 }) {
   const [step, setStep] = useState(1);
   const [showSymbolBank, setShowSymbolBank] = useState(false);
@@ -1064,6 +1223,17 @@ function EditorView({
     }
   }, [ad.relativesRows, setAd]);
 
+  useEffect(() => {
+    if (!ad.symbolLockId) return;
+    const source = (symbolLibrary && symbolLibrary.length ? symbolLibrary : defaultSymbolLibrary()).find(
+      (s) => s.id === ad.symbolLockId
+    );
+    if (!source) return;
+    const sizeMm = ad.annonseType === "Takk" ? source.sizeThanksMm : source.sizeDeathMm;
+    if (!sizeMm) return;
+    setAd((prev) => ({ ...prev, symbolSize: mmToPx(sizeMm), symbolSizeLocked: true }));
+  }, [ad.annonseType, ad.symbolLockId, symbolLibrary, setAd]);
+
   if (!oppdrag) {
     return (
       <div>
@@ -1084,10 +1254,23 @@ function EditorView({
   const selectedPublication = publicationOptions.find((p) => p.name === ad.publication);
   const printDates = selectedPublication ? selectedPublication.printDates : [];
 
-  const templateOptions =
-    ad.annonseType === "Takk"
-      ? ["Takk 1sp", "Takk 1sp m/symbol", "Takk 2sp", "Takk 2sp m/symbol"]
-      : ["1sp", "2sp", "1sp dobbelannonser"];
+  const templateOptions = getTemplateOptionsForPublication(
+    ad.publication,
+    ad.annonseType,
+    templateConfig
+  );
+  const defaultTemplate = getDefaultTemplateForPublication(
+    ad.publication,
+    ad.annonseType,
+    templateConfig
+  );
+
+  useEffect(() => {
+    if (!templateOptions.length) return;
+    if (!ad.template || !templateOptions.includes(ad.template)) {
+      setAd((prev) => ({ ...prev, template: defaultTemplate || templateOptions[0] }));
+    }
+  }, [ad.publication, ad.annonseType, templateConfig, templateOptions, defaultTemplate, setAd]);
 
   const templateLayout = (label) => {
     const isTwoCol = label.includes("2sp");
@@ -1106,8 +1289,22 @@ function EditorView({
     );
   };
 
-  const symbolOptions = ["✝", "❦", "✶", "✜", "✟", "✙", "✞", "✤", "✧", "✿", "❀"];
-  const filteredSymbols = symbolOptions.filter((s) => s.includes(symbolSearch.trim()));
+  const symbolOptions = (symbolLibrary && symbolLibrary.length ? symbolLibrary : defaultSymbolLibrary()).map(
+    (s) => ({
+      id: s.id || s.value,
+      label: s.label || s.value,
+      value: s.value || "",
+      type: s.type || "text",
+      src: s.src || "",
+      sizeDeathMm: s.sizeDeathMm,
+      sizeThanksMm: s.sizeThanksMm,
+    })
+  );
+  const filteredSymbols = symbolOptions.filter((s) => {
+    const q = symbolSearch.trim().toLowerCase();
+    if (!q) return true;
+    return s.label.toLowerCase().includes(q) || s.value.toLowerCase().includes(q);
+  });
 
   const fullName = [ad.firstName, ad.middleName, ad.lastName].filter(Boolean).join(" ").trim();
   const step1Valid = Boolean(ad.publication && ad.printDate && ad.digitalDate);
@@ -1125,9 +1322,18 @@ function EditorView({
     if (ad.annonseType === "Takk") {
       return (
         <div className="border-2 border-slate-400 rounded p-6 bg-white">
-          {ad.symbol ? (
+          {ad.symbolImage || ad.symbol ? (
             <div className="mb-3 text-center" style={{ fontSize: `${ad.symbolSize || 24}px` }}>
-              {ad.symbol}
+              {ad.symbolImage ? (
+                <img
+                  src={ad.symbolImage}
+                  alt="Symbol"
+                  style={{ width: `${ad.symbolSize || 24}px`, height: `${ad.symbolSize || 24}px` }}
+                  className="inline-block object-contain"
+                />
+              ) : (
+                ad.symbol
+              )}
             </div>
           ) : null}
           <div className="text-lg font-bold mb-2">Hjertelig takk</div>
@@ -1144,9 +1350,18 @@ function EditorView({
 
     return (
       <div className="border rounded p-6 text-center bg-white">
-        {ad.symbol ? (
+        {ad.symbolImage || ad.symbol ? (
           <div className="mb-3" style={{ fontSize: `${ad.symbolSize || 24}px` }}>
-            {ad.symbol}
+            {ad.symbolImage ? (
+              <img
+                src={ad.symbolImage}
+                alt="Symbol"
+                style={{ width: `${ad.symbolSize || 24}px`, height: `${ad.symbolSize || 24}px` }}
+                className="inline-block object-contain"
+              />
+            ) : (
+              ad.symbol
+            )}
           </div>
         ) : null}
         {ad.intro ? <div className="text-sm italic mb-2">{ad.intro}</div> : null}
@@ -1349,24 +1564,48 @@ function EditorView({
               <div className="col-span-6">
                 <label className="text-sm block">Symbol</label>
                 <div className="flex gap-2 mt-1">
-                  <input className="w-full border p-2 rounded text-sm" value={ad.symbol} onChange={(e) => setAd({ ...ad, symbol: e.target.value })} />
+                  <input
+                    className="w-full border p-2 rounded text-sm"
+                    value={ad.symbol}
+                    onChange={(e) =>
+                      setAd({
+                        ...ad,
+                        symbol: e.target.value,
+                        symbolImage: "",
+                        symbolLockId: "",
+                        symbolSizeLocked: false,
+                      })
+                    }
+                  />
                   <button className="px-3 py-1 border rounded" onClick={() => setShowSymbolBank(true)}>
                     Velg
                   </button>
                 </div>
               </div>
-              <div className="col-span-6">
-                <label className="text-sm block">Symbolstørrelse</label>
-                <div className="flex items-center gap-2 mt-1">
-                  <button className="px-2 py-1 border rounded" onClick={() => setAd({ ...ad, symbolSize: Math.max(12, ad.symbolSize - 2) })}>
-                    -
-                  </button>
-                  <div className="text-sm">{ad.symbolSize}px</div>
-                  <button className="px-2 py-1 border rounded" onClick={() => setAd({ ...ad, symbolSize: Math.min(64, ad.symbolSize + 2) })}>
-                    +
-                  </button>
+              {!ad.symbolSizeLocked && (
+                <div className="col-span-6">
+                  <label className="text-sm block">Symbolstørrelse</label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <button
+                      className="px-2 py-1 border rounded"
+                      onClick={() => {
+                        setAd({ ...ad, symbolSize: Math.max(12, ad.symbolSize - 2) });
+                      }}
+                    >
+                      -
+                    </button>
+                    <div className="text-sm">{ad.symbolSize}px</div>
+                    <button
+                      className="px-2 py-1 border rounded"
+                      onClick={() => {
+                        setAd({ ...ad, symbolSize: Math.min(64, ad.symbolSize + 2) });
+                      }}
+                    >
+                      +
+                    </button>
+                  </div>
                 </div>
-              </div>
+              )}
               {ad.annonseType === "Takk" ? (
                 <>
                   <div className="col-span-12">
@@ -1764,15 +2003,40 @@ function EditorView({
             <div className="grid grid-cols-6 gap-2">
               {filteredSymbols.map((s) => (
                 <button
-                  key={s}
+                  key={s.id}
                   className="border rounded p-2 text-lg hover:bg-slate-50"
                   onClick={() => {
-                    setAd({ ...ad, symbol: s });
+                    const sizeMm = ad.annonseType === "Takk" ? s.sizeThanksMm : s.sizeDeathMm;
+                    const lockedSize = sizeMm ? mmToPx(sizeMm) : ad.symbolSize;
+                    if (s.type === "png") {
+                      setAd({
+                        ...ad,
+                        symbolImage: s.src,
+                        symbol: "",
+                        symbolLockId: s.id,
+                        symbolSize: lockedSize,
+                        symbolSizeLocked: Boolean(sizeMm),
+                      });
+                    } else {
+                      setAd({
+                        ...ad,
+                        symbol: s.value,
+                        symbolImage: "",
+                        symbolLockId: s.id,
+                        symbolSize: lockedSize,
+                        symbolSizeLocked: Boolean(sizeMm),
+                      });
+                    }
                     setShowSymbolBank(false);
                     setSymbolSearch("");
                   }}
                 >
-                  {s}
+                  {s.type === "png" ? (
+                    <img src={s.src} alt={s.label} className="h-8 w-8 object-contain mx-auto" />
+                  ) : (
+                    s.value
+                  )}
+                  <div className="text-[10px] text-slate-500 mt-1 text-center">{s.label}</div>
                 </button>
               ))}
             </div>
@@ -2129,6 +2393,1096 @@ function Placeholder({ title, contentClass }) {
   );
 }
 
+function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, templateConfig, setTemplateConfig }) {
+  const roleOptions = ["Godkjenner", "Produsent", "Administrator", "Superadministrator"];
+  const regionOptions = ["Midt", "Nord", "Sør", "Vest", "Øst"];
+  const initialUsers = [
+    { id: "u1", name: "Torgeir Roness", region: "Midt", role: "Superadministrator", username: currentUser, email: "torgeir.roness@adresseavisen.no", password: "" },
+    { id: "u2", name: "Marit Nordmann", region: "Midt", role: "Produsent", email: "marit.nordmann@adresseavisen.no", password: "" },
+    { id: "u3", name: "Frank Hansen", region: "Sør", role: "Godkjenner", email: "frank.hansen@adresseavisen.no", password: "" },
+    { id: "u4", name: "Sigrid Løken", region: "Øst", role: "Administrator", email: "sigrid.loken@adresseavisen.no", password: "" },
+    { id: "u5", name: "Ellen Skaare", region: "Vest", role: "Produsent", email: "ellen.skaare@adresseavisen.no", password: "" },
+  ];
+  const [users, setUsers] = useState(() => initialUsers);
+  const [savedUsers, setSavedUsers] = useState(() => initialUsers);
+  const [showUserModal, setShowUserModal] = useState(false);
+  const [editingUserId, setEditingUserId] = useState(null);
+  const [userForm, setUserForm] = useState({
+    name: "",
+    email: "",
+    password: "",
+    region: "Midt",
+    role: "Godkjenner",
+  });
+  const [symbolSearch, setSymbolSearch] = useState("");
+  const [showSymbolModal, setShowSymbolModal] = useState(false);
+  const [showSymbolEditModal, setShowSymbolEditModal] = useState(false);
+  const [editingSymbolId, setEditingSymbolId] = useState(null);
+  const [symbolForm, setSymbolForm] = useState({ label: "", file: null, preview: "" });
+  const [symbolEditForm, setSymbolEditForm] = useState({ label: "", sizeDeathMm: 18, sizeThanksMm: 16 });
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [editingMediahouseKey, setEditingMediahouseKey] = useState(null);
+  const [templateForm, setTemplateForm] = useState({
+    deathTemplates: [],
+    thanksTemplates: [],
+    defaultDeath: "",
+    defaultThanks: "",
+  });
+  const [showTemplatePreview, setShowTemplatePreview] = useState(false);
+  const [previewEditType, setPreviewEditType] = useState(null);
+  const [templateStyleForm, setTemplateStyleForm] = useState({
+    fontFamily: "Times New Roman",
+    fontSizePt: 12,
+    marginTopMm: 8,
+    marginBottomMm: 8,
+  });
+  const currentUserRecord =
+    users.find((user) => user.username === currentUser) || { role: "Godkjenner", region: "Midt" };
+  const isSuperAdmin = currentUserRecord.role === "Superadministrator";
+  const isAdmin = currentUserRecord.role === "Administrator";
+  const isProducer = currentUserRecord.role === "Produsent";
+  const isApprover = currentUserRecord.role === "Godkjenner";
+  const canManageUsers = isSuperAdmin || isAdmin;
+  const [adminTab, setAdminTab] = useState("brukere");
+  const safeSymbolLibrary = symbolLibrary && symbolLibrary.length ? symbolLibrary : defaultSymbolLibrary();
+  const safeTemplateConfig = templateConfig && templateConfig.mediahouses ? templateConfig : defaultTemplateConfig();
+  const hasUnsavedChanges = useMemo(
+    () => JSON.stringify(users) !== JSON.stringify(savedUsers),
+    [users, savedUsers]
+  );
+
+  function canEditUser(user) {
+    if (isSuperAdmin) return true;
+    if (isAdmin && user.region === currentUserRecord.region) return true;
+    return false;
+  }
+
+  function openCreateUser() {
+    if (!canManageUsers) return;
+    setEditingUserId(null);
+    setUserForm({
+      name: "",
+      email: "",
+      password: "",
+      region: isAdmin ? currentUserRecord.region : "Midt",
+      role: "Godkjenner",
+    });
+    setShowUserModal(true);
+  }
+
+  function openEditUser(user) {
+    if (!canEditUser(user)) return;
+    setEditingUserId(user.id);
+    setUserForm({
+      name: user.name || "",
+      email: user.email || "",
+      password: "",
+      region: user.region || "Midt",
+      role: user.role || "Godkjenner",
+    });
+    setShowUserModal(true);
+  }
+
+  function handleSaveUser() {
+    if (!canManageUsers) return;
+    if (editingUserId) {
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === editingUserId
+            ? {
+                ...u,
+                name: userForm.name || u.name,
+                email: userForm.email,
+                password: userForm.password || u.password,
+                region: userForm.region,
+                role: userForm.role,
+              }
+            : u
+        )
+      );
+    } else {
+      const id = `u-${Math.random().toString(36).slice(2, 8)}`;
+      setUsers((prev) => [
+        ...prev,
+        {
+          id,
+          name: userForm.name || "Ny bruker",
+          email: userForm.email,
+          password: userForm.password,
+          region: userForm.region,
+          role: userForm.role,
+        },
+      ]);
+    }
+    setShowUserModal(false);
+  }
+
+  function handleSaveChanges() {
+    if (!canManageUsers) return;
+    setSavedUsers(users);
+  }
+
+  function openAddSymbol() {
+    if (!canManageUsers) return;
+    setSymbolForm({ label: "", file: null, preview: "" });
+    setShowSymbolModal(true);
+  }
+
+  function openEditSymbol(symbol) {
+    if (!canManageUsers) return;
+    setEditingSymbolId(symbol.id);
+    setSymbolEditForm({
+      label: symbol.label || "",
+      sizeDeathMm: symbol.sizeDeathMm ?? 18,
+      sizeThanksMm: symbol.sizeThanksMm ?? 16,
+    });
+    setShowSymbolEditModal(true);
+  }
+
+  function handleSaveSymbolEdit() {
+    if (!canManageUsers || !editingSymbolId) return;
+    setSymbolLibrary((prev) =>
+      (prev || []).map((sym) =>
+        sym.id === editingSymbolId
+          ? {
+              ...sym,
+              label: symbolEditForm.label.trim() || sym.label,
+              sizeDeathMm: Number(symbolEditForm.sizeDeathMm) || sym.sizeDeathMm || 18,
+              sizeThanksMm: Number(symbolEditForm.sizeThanksMm) || sym.sizeThanksMm || 16,
+            }
+          : sym
+      )
+    );
+    setShowSymbolEditModal(false);
+  }
+
+  function openTemplateEditor(mediahouseKey) {
+    if (!canManageUsers) return;
+    const entry = safeTemplateConfig.mediahouses[mediahouseKey];
+    if (!entry) return;
+    setEditingMediahouseKey(mediahouseKey);
+    setTemplateForm({
+      deathTemplates: entry.deathTemplates || [],
+      thanksTemplates: entry.thanksTemplates || [],
+      defaultDeath: entry.defaultDeath || "",
+      defaultThanks: entry.defaultThanks || "",
+    });
+    setShowTemplateModal(true);
+  }
+
+  function openTemplatePreview(mediahouseKey) {
+    const entry = safeTemplateConfig.mediahouses[mediahouseKey];
+    if (!entry) return;
+    setEditingMediahouseKey(mediahouseKey);
+    setShowTemplatePreview(true);
+    setPreviewEditType(null);
+    setTemplateStyleForm({
+      fontFamily: entry.style?.fontFamily || "Times New Roman",
+      fontSizePt: entry.style?.fontSizePt ?? 12,
+      marginTopMm: entry.style?.marginTopMm ?? 8,
+      marginBottomMm: entry.style?.marginBottomMm ?? 8,
+    });
+  }
+
+  function handleSaveTemplateConfig() {
+    if (!canManageUsers || !editingMediahouseKey) return;
+    setTemplateConfig((prev) => {
+      const base = prev && prev.mediahouses ? prev : defaultTemplateConfig();
+      return {
+        ...base,
+        mediahouses: {
+          ...base.mediahouses,
+          [editingMediahouseKey]: {
+            ...base.mediahouses[editingMediahouseKey],
+            deathTemplates: templateForm.deathTemplates.length
+              ? templateForm.deathTemplates
+              : base.mediahouses[editingMediahouseKey].deathTemplates,
+            thanksTemplates: templateForm.thanksTemplates.length
+              ? templateForm.thanksTemplates
+              : base.mediahouses[editingMediahouseKey].thanksTemplates,
+            defaultDeath: templateForm.defaultDeath || base.mediahouses[editingMediahouseKey].defaultDeath,
+            defaultThanks: templateForm.defaultThanks || base.mediahouses[editingMediahouseKey].defaultThanks,
+          },
+        },
+      };
+    });
+    setShowTemplateModal(false);
+  }
+
+  function handleSaveSymbol() {
+    if (!canManageUsers) return;
+    const label = symbolForm.label.trim();
+    if (!label || !symbolForm.file || !symbolForm.preview) return;
+    setSymbolLibrary((prev) => [
+      ...(prev && prev.length ? prev : defaultSymbolLibrary()),
+      {
+        id: `sym-${Math.random().toString(36).slice(2, 8)}`,
+        label,
+        type: "png",
+        src: symbolForm.preview,
+        filename: symbolForm.file?.name || "symbol.png",
+      },
+    ]);
+    setShowSymbolModal(false);
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-2xl font-bold">Administrasjon</h3>
+        <div className="flex items-center gap-2">
+          <button
+            className={`px-4 py-2 rounded ${canManageUsers ? "bg-slate-800 text-white" : "bg-slate-200 text-slate-500 cursor-not-allowed"}`}
+            onClick={openCreateUser}
+            disabled={!canManageUsers}
+          >
+            Opprett ny bruker
+          </button>
+          <button
+            className={`px-4 py-2 rounded ${canManageUsers && hasUnsavedChanges ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-500 cursor-not-allowed"}`}
+            onClick={handleSaveChanges}
+            disabled={!canManageUsers || !hasUnsavedChanges}
+          >
+            Lagre endringer
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white border rounded shadow-sm">
+        <div className="border-b p-3 flex gap-2 text-sm">
+          <button
+            className={`px-3 py-1 rounded ${adminTab === "brukere" ? "bg-slate-100 font-semibold" : "hover:bg-slate-50"}`}
+            onClick={() => setAdminTab("brukere")}
+          >
+            Brukerstyring
+          </button>
+          <button
+            className={`px-3 py-1 rounded ${adminTab === "maler" ? "bg-slate-100 font-semibold" : "hover:bg-slate-50"}`}
+            onClick={() => setAdminTab("maler")}
+          >
+            Maler
+          </button>
+          <button
+            className={`px-3 py-1 rounded ${adminTab === "integrasjoner" ? "bg-slate-100 font-semibold" : "hover:bg-slate-50"}`}
+            onClick={() => setAdminTab("integrasjoner")}
+          >
+            Integrasjoner
+          </button>
+          <button
+            className={`px-3 py-1 rounded ${adminTab === "symboler" ? "bg-slate-100 font-semibold" : "hover:bg-slate-50"}`}
+            onClick={() => setAdminTab("symboler")}
+          >
+            Symbolbibliotek
+          </button>
+        </div>
+
+        {adminTab === "brukere" && (
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="p-3 text-left">Navn</th>
+                <th className="p-3 text-left">Mediehusregion</th>
+                <th className="p-3 text-left">Rolle</th>
+                <th className="p-3 text-left">Handling</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((user) => (
+                <tr key={user.id} className="border-t hover:bg-slate-50">
+                  <td className="p-3">
+                    <div className="font-medium">{user.name}</div>
+                    {user.username === currentUser ? (
+                      <div className="text-xs text-slate-500">Innlogget</div>
+                    ) : null}
+                  </td>
+                  <td className="p-3">{user.region}</td>
+                  <td className="p-3">
+                    <select
+                      className="border p-2 rounded text-sm"
+                      value={user.role}
+                      disabled={!canEditUser(user)}
+                      onChange={(e) =>
+                        setUsers((prev) =>
+                          prev.map((u) => (u.id === user.id ? { ...u, role: e.target.value } : u))
+                        )
+                      }
+                    >
+                      {roleOptions.map((role) => (
+                        <option key={role} value={role}>
+                          {role}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="p-3">
+                    <button
+                      className={`px-3 py-1 border rounded text-sm ${canEditUser(user) ? "" : "text-slate-400 cursor-not-allowed"}`}
+                      onClick={() => openEditUser(user)}
+                      disabled={!canEditUser(user)}
+                    >
+                      Rediger
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {adminTab === "maler" && (
+          <div className="p-6">
+            {isSuperAdmin || isAdmin ? (
+              <div>
+                <div className="text-sm text-slate-600 mb-3">Velg mediehus for å justere maler.</div>
+                <div className="border rounded">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="p-3 text-left">Mediehus</th>
+                        <th className="p-3 text-left">Standard (Død)</th>
+                        <th className="p-3 text-left">Standard (Takk)</th>
+                        <th className="p-3 text-left">Handling</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.keys(safeTemplateConfig.mediahouses).map((key) => {
+                        const entry = safeTemplateConfig.mediahouses[key];
+                        return (
+                          <tr key={key} className="border-t hover:bg-slate-50">
+                            <td className="p-3">{entry.name}</td>
+                            <td className="p-3">{entry.defaultDeath}</td>
+                            <td className="p-3">{entry.defaultThanks}</td>
+                            <td className="p-3">
+                              <div className="flex items-center gap-2">
+                                <button
+                                  className={`px-3 py-1 border rounded text-sm ${canManageUsers ? "" : "text-slate-400 cursor-not-allowed"}`}
+                                  onClick={() => openTemplateEditor(key)}
+                                  disabled={!canManageUsers}
+                                >
+                                  Rediger maler
+                                </button>
+                                <button
+                                  className="px-3 py-1 border rounded text-sm"
+                                  onClick={() => openTemplatePreview(key)}
+                                >
+                                  Vis maler
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm text-slate-500">Ingen tilgang til maler.</div>
+            )}
+          </div>
+        )}
+
+        {adminTab === "integrasjoner" && (
+          <div className="p-6">
+            {isSuperAdmin ? (
+              <div className="text-sm text-slate-600">Integrasjoner kommer her (CA/ADpoint, leverandører).</div>
+            ) : (
+              <div className="text-sm text-slate-500">Ingen tilgang til integrasjoner.</div>
+            )}
+          </div>
+        )}
+
+        {adminTab === "symboler" && (
+          <div className="p-6">
+            {isSuperAdmin || isAdmin ? (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-sm text-slate-600">Symbolbibliotek</div>
+                  <button
+                    className={`px-3 py-1 rounded ${canManageUsers ? "bg-slate-800 text-white" : "bg-slate-200 text-slate-500 cursor-not-allowed"}`}
+                    onClick={openAddSymbol}
+                    disabled={!canManageUsers}
+                  >
+                    Legg til symbol
+                  </button>
+                </div>
+                <div className="mb-3">
+                  <input
+                    className="w-full border p-2 rounded text-sm"
+                    placeholder="Søk symbol"
+                    value={symbolSearch}
+                    onChange={(e) => setSymbolSearch(e.target.value)}
+                  />
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {safeSymbolLibrary
+                    .filter((symbol) => {
+                      const q = symbolSearch.trim().toLowerCase();
+                      if (!q) return true;
+                      return (
+                        symbol.label.toLowerCase().includes(q) ||
+                        (symbol.value || "").toLowerCase().includes(q) ||
+                        (symbol.filename || "").toLowerCase().includes(q)
+                      );
+                    })
+                    .map((symbol) => (
+                    <div
+                      key={symbol.id}
+                      className={`border rounded p-3 flex items-center gap-3 ${canManageUsers ? "hover:bg-slate-50 cursor-pointer" : ""}`}
+                      onClick={() => openEditSymbol(symbol)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") openEditSymbol(symbol);
+                      }}
+                    >
+                      <div className="text-2xl">
+                        {symbol.type === "png" ? (
+                          <img src={symbol.src} alt={symbol.label} className="h-8 w-8 object-contain" />
+                        ) : (
+                          symbol.value
+                        )}
+                      </div>
+                      <div className="text-sm flex-1">
+                        <div className="font-medium">{symbol.label}</div>
+                        <div className="text-xs text-slate-500">{symbol.type === "png" ? symbol.filename : symbol.value}</div>
+                      </div>
+                      <button
+                        className={`px-2 py-1 text-xs border rounded ${canManageUsers ? "text-red-600" : "text-slate-400 cursor-not-allowed"}`}
+                        onClick={() => {
+                          if (!canManageUsers) return;
+                          if (confirm("Slett symbol?")) {
+                            setSymbolLibrary((prev) => (prev || []).filter((s) => s.id !== symbol.id));
+                          }
+                        }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClickCapture={(e) => e.stopPropagation()}
+                        disabled={!canManageUsers}
+                      >
+                        Slett
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm text-slate-500">Ingen tilgang til symbolbibliotek.</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {showUserModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded shadow-lg w-full max-w-xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-lg font-semibold">{editingUserId ? "Rediger bruker" : "Opprett ny bruker"}</h4>
+              <button className="px-2 py-1 border rounded" onClick={() => setShowUserModal(false)}>
+                Lukk
+              </button>
+            </div>
+
+            <div className="grid grid-cols-12 gap-4">
+              <div className="col-span-12">
+                <label className="text-sm">Navn</label>
+                <input
+                  className="w-full border p-2 rounded mt-1"
+                  value={userForm.name}
+                  disabled={!canManageUsers}
+                  onChange={(e) => setUserForm({ ...userForm, name: e.target.value })}
+                />
+              </div>
+              <div className="col-span-12">
+                <label className="text-sm">Innloggingsepost</label>
+                <input
+                  className="w-full border p-2 rounded mt-1"
+                  value={userForm.email}
+                  disabled={!canManageUsers}
+                  onChange={(e) => setUserForm({ ...userForm, email: e.target.value })}
+                />
+              </div>
+              <div className="col-span-12">
+                <label className="text-sm">Passord</label>
+                <input
+                  type="password"
+                  className="w-full border p-2 rounded mt-1"
+                  value={userForm.password}
+                  disabled={!canManageUsers}
+                  onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+                />
+              </div>
+              <div className="col-span-6">
+                <label className="text-sm">Mediehusregion</label>
+                <select
+                  className="w-full border p-2 rounded mt-1 text-sm"
+                  value={userForm.region}
+                  disabled={!canManageUsers || isAdmin}
+                  onChange={(e) => setUserForm({ ...userForm, region: e.target.value })}
+                >
+                  {regionOptions.map((region) => (
+                    <option key={region} value={region}>
+                      {region}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-span-6">
+                <label className="text-sm">Rolle</label>
+                <select
+                  className="w-full border p-2 rounded mt-1 text-sm"
+                  value={userForm.role}
+                  disabled={!canManageUsers}
+                  onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}
+                >
+                  {roleOptions.map((role) => (
+                    <option key={role} value={role}>
+                      {role}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button className="px-3 py-1 border rounded" onClick={() => setShowUserModal(false)}>
+                Avbryt
+              </button>
+              <button
+                className={`px-3 py-1 rounded ${canManageUsers ? "bg-slate-800 text-white" : "bg-slate-200 text-slate-500 cursor-not-allowed"}`}
+                onClick={handleSaveUser}
+                disabled={!canManageUsers}
+              >
+                Lagre
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSymbolModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded shadow-lg w-full max-w-lg p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-lg font-semibold">Legg til symbol</h4>
+              <button className="px-2 py-1 border rounded" onClick={() => setShowSymbolModal(false)}>
+                Lukk
+              </button>
+            </div>
+
+            <div className="grid grid-cols-12 gap-4">
+              <div className="col-span-12">
+                <label className="text-sm">Navn</label>
+                <input
+                  className="w-full border p-2 rounded mt-1"
+                  value={symbolForm.label}
+                  onChange={(e) => setSymbolForm({ ...symbolForm, label: e.target.value })}
+                />
+              </div>
+              <div className="col-span-12">
+                <label className="text-sm">Symbol (PNG)</label>
+                <input
+                  type="file"
+                  accept="image/png"
+                  className="w-full border p-2 rounded mt-1"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    if (!file) {
+                      setSymbolForm({ ...symbolForm, file: null, preview: "" });
+                      return;
+                    }
+                    const preview = URL.createObjectURL(file);
+                    setSymbolForm({ ...symbolForm, file, preview });
+                  }}
+                />
+                {symbolForm.preview ? (
+                  <div className="mt-2 border rounded p-2 inline-flex items-center gap-2">
+                    <img src={symbolForm.preview} alt="Forhåndsvisning" className="h-10 w-10 object-contain" />
+                    <div className="text-xs text-slate-500">{symbolForm.file?.name || "symbol.png"}</div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button className="px-3 py-1 border rounded" onClick={() => setShowSymbolModal(false)}>
+                Avbryt
+              </button>
+              <button
+                className={`px-3 py-1 rounded ${canManageUsers ? "bg-slate-800 text-white" : "bg-slate-200 text-slate-500 cursor-not-allowed"}`}
+                onClick={handleSaveSymbol}
+                disabled={!canManageUsers}
+              >
+                Legg til
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSymbolEditModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded shadow-lg w-full max-w-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-lg font-semibold">Rediger symbol</h4>
+              <button className="px-2 py-1 border rounded" onClick={() => setShowSymbolEditModal(false)}>
+                Lukk
+              </button>
+            </div>
+
+            <div className="grid grid-cols-12 gap-4">
+              <div className="col-span-12 md:col-span-6">
+                <label className="text-sm">Navn</label>
+                <input
+                  className="w-full border p-2 rounded mt-1"
+                  value={symbolEditForm.label}
+                  onChange={(e) => setSymbolEditForm({ ...symbolEditForm, label: e.target.value })}
+                />
+              </div>
+              <div className="col-span-6 md:col-span-3">
+                <label className="text-sm">Størrelse dødsannonse (mm)</label>
+                <input
+                  type="number"
+                  min="8"
+                  className="w-full border p-2 rounded mt-1"
+                  value={symbolEditForm.sizeDeathMm}
+                  onChange={(e) => setSymbolEditForm({ ...symbolEditForm, sizeDeathMm: e.target.value })}
+                />
+              </div>
+              <div className="col-span-6 md:col-span-3">
+                <label className="text-sm">Størrelse takkeannonse (mm)</label>
+                <input
+                  type="number"
+                  min="8"
+                  className="w-full border p-2 rounded mt-1"
+                  value={symbolEditForm.sizeThanksMm}
+                  onChange={(e) => setSymbolEditForm({ ...symbolEditForm, sizeThanksMm: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-12 gap-4">
+              <div className="col-span-12 md:col-span-6">
+                <div className="text-xs text-slate-500 mb-2">Dødsannonse (topp)</div>
+                <div className="border rounded p-4 bg-white">
+                  <div className="flex flex-col items-center">
+                    {(() => {
+                      const sym = safeSymbolLibrary.find((s) => s.id === editingSymbolId);
+                      const sizePx = mmToPx(Number(symbolEditForm.sizeDeathMm) || 18);
+                      return sym?.type === "png" ? (
+                        <img
+                          src={sym.src}
+                          alt={sym.label}
+                          style={{ width: `${sizePx}px`, height: `${sizePx}px` }}
+                          className="object-contain"
+                        />
+                      ) : (
+                        <div style={{ fontSize: `${sizePx}px` }}>{sym?.value}</div>
+                      );
+                    })()}
+                    <div className="text-xs italic mt-2">Vår kjære</div>
+                    <div className="text-sm font-semibold">Kari Nordmann</div>
+                  </div>
+                </div>
+              </div>
+              <div className="col-span-12 md:col-span-6">
+                <div className="text-xs text-slate-500 mb-2">Takkeannonse (topp)</div>
+                <div className="border rounded p-4 bg-white">
+                  <div className="flex flex-col items-center">
+                    {(() => {
+                      const sym = safeSymbolLibrary.find((s) => s.id === editingSymbolId);
+                      const sizePx = mmToPx(Number(symbolEditForm.sizeThanksMm) || 16);
+                      return sym?.type === "png" ? (
+                        <img
+                          src={sym.src}
+                          alt={sym.label}
+                          style={{ width: `${sizePx}px`, height: `${sizePx}px` }}
+                          className="object-contain"
+                        />
+                      ) : (
+                        <div style={{ fontSize: `${sizePx}px` }}>{sym?.value}</div>
+                      );
+                    })()}
+                    <div className="text-sm font-semibold mt-2">Hjertelig takk</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button className="px-3 py-1 border rounded" onClick={() => setShowSymbolEditModal(false)}>
+                Avbryt
+              </button>
+              <button
+                className={`px-3 py-1 rounded ${canManageUsers ? "bg-slate-800 text-white" : "bg-slate-200 text-slate-500 cursor-not-allowed"}`}
+                onClick={handleSaveSymbolEdit}
+                disabled={!canManageUsers}
+              >
+                Lagre
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showTemplateModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded shadow-lg w-full max-w-3xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-lg font-semibold">Rediger maler</h4>
+              <button className="px-2 py-1 border rounded" onClick={() => setShowTemplateModal(false)}>
+                Lukk
+              </button>
+            </div>
+
+            <div className="grid grid-cols-12 gap-6">
+              <div className="col-span-12 md:col-span-6">
+                <div className="font-semibold mb-2">Dødsannonser</div>
+                <div className="space-y-2">
+                  {defaultTemplateConfig().defaults.death.map((t) => (
+                    <label key={t} className="flex items-center text-sm">
+                      <input
+                        type="checkbox"
+                        className="mr-2"
+                        checked={templateForm.deathTemplates.includes(t)}
+                        onChange={(e) => {
+                          const next = e.target.checked
+                            ? [...templateForm.deathTemplates, t]
+                            : templateForm.deathTemplates.filter((x) => x !== t);
+                          setTemplateForm({ ...templateForm, deathTemplates: next });
+                        }}
+                      />
+                      {t}
+                    </label>
+                  ))}
+                </div>
+                <div className="mt-3">
+                  <label className="text-sm">Standard mal</label>
+                  <select
+                    className="w-full border p-2 rounded mt-1 text-sm"
+                    value={templateForm.defaultDeath}
+                    onChange={(e) => setTemplateForm({ ...templateForm, defaultDeath: e.target.value })}
+                  >
+                    {templateForm.deathTemplates.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="col-span-12 md:col-span-6">
+                <div className="font-semibold mb-2">Takkeannonser</div>
+                <div className="space-y-2">
+                  {defaultTemplateConfig().defaults.thanks.map((t) => (
+                    <label key={t} className="flex items-center text-sm">
+                      <input
+                        type="checkbox"
+                        className="mr-2"
+                        checked={templateForm.thanksTemplates.includes(t)}
+                        onChange={(e) => {
+                          const next = e.target.checked
+                            ? [...templateForm.thanksTemplates, t]
+                            : templateForm.thanksTemplates.filter((x) => x !== t);
+                          setTemplateForm({ ...templateForm, thanksTemplates: next });
+                        }}
+                      />
+                      {t}
+                    </label>
+                  ))}
+                </div>
+                <div className="mt-3">
+                  <label className="text-sm">Standard mal</label>
+                  <select
+                    className="w-full border p-2 rounded mt-1 text-sm"
+                    value={templateForm.defaultThanks}
+                    onChange={(e) => setTemplateForm({ ...templateForm, defaultThanks: e.target.value })}
+                  >
+                    {templateForm.thanksTemplates.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button className="px-3 py-1 border rounded" onClick={() => setShowTemplateModal(false)}>
+                Avbryt
+              </button>
+              <button
+                className={`px-3 py-1 rounded ${canManageUsers ? "bg-slate-800 text-white" : "bg-slate-200 text-slate-500 cursor-not-allowed"}`}
+                onClick={handleSaveTemplateConfig}
+                disabled={!canManageUsers}
+              >
+                Lagre
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showTemplatePreview && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded shadow-lg w-full max-w-4xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-lg font-semibold">Maler for mediehus</h4>
+              <button className="px-2 py-1 border rounded" onClick={() => setShowTemplatePreview(false)}>
+                Lukk
+              </button>
+            </div>
+
+            {editingMediahouseKey ? (
+              <>
+                <div className="text-sm text-slate-600 mb-4">
+                  {safeTemplateConfig.mediahouses[editingMediahouseKey]?.name}
+                </div>
+                <div className="grid grid-cols-12 gap-6">
+                  <div className="col-span-12 md:col-span-6">
+                    <div className="text-sm font-semibold mb-2">Dødsannonse — Digital</div>
+                    <button
+                      className={`w-full text-left border rounded p-4 bg-white ${canManageUsers ? "hover:bg-slate-50" : ""}`}
+                      onClick={() => setPreviewEditType("death")}
+                      disabled={!canManageUsers}
+                    >
+                      <div className="text-xs text-slate-500 mb-2">Standard: {safeTemplateConfig.mediahouses[editingMediahouseKey]?.defaultDeath}</div>
+                      <div
+                        className="border-2 border-slate-300 rounded p-4 text-center"
+                        style={{
+                          fontFamily: templateStyleForm.fontFamily,
+                          fontSize: `${ptToPx(templateStyleForm.fontSizePt)}px`,
+                          paddingTop: `${mmToPx(templateStyleForm.marginTopMm)}px`,
+                          paddingBottom: `${mmToPx(templateStyleForm.marginBottomMm)}px`,
+                        }}
+                      >
+                        <div className="text-sm italic mb-2">Vår kjære</div>
+                        <div className="text-lg font-semibold">Kari Nordmann</div>
+                        <div className="text-xs text-slate-500 mt-2">Digital visning</div>
+                      </div>
+                    </button>
+                  </div>
+                  <div className="col-span-12 md:col-span-6">
+                    <div className="text-sm font-semibold mb-2">Dødsannonse — Print</div>
+                    <button
+                      className={`w-full text-left border rounded p-4 bg-white ${canManageUsers ? "hover:bg-slate-50" : ""}`}
+                      onClick={() => setPreviewEditType("death")}
+                      disabled={!canManageUsers}
+                    >
+                      <div className="text-xs text-slate-500 mb-2">Standard: {safeTemplateConfig.mediahouses[editingMediahouseKey]?.defaultDeath}</div>
+                      <div
+                        className="border-2 border-slate-300 rounded p-4 text-center"
+                        style={{
+                          fontFamily: templateStyleForm.fontFamily,
+                          fontSize: `${ptToPx(templateStyleForm.fontSizePt)}px`,
+                          paddingTop: `${mmToPx(templateStyleForm.marginTopMm)}px`,
+                          paddingBottom: `${mmToPx(templateStyleForm.marginBottomMm)}px`,
+                        }}
+                      >
+                        <div className="text-xs text-slate-500 mb-1">Print visning</div>
+                        <div className="text-lg font-semibold">Kari Nordmann</div>
+                      </div>
+                    </button>
+                  </div>
+                  {previewEditType === "death" ? (
+                    <div className="col-span-12">
+                      <div className="text-sm font-semibold mb-2">Juster mal (Dødsannonse)</div>
+                      <div className="grid grid-cols-12 gap-3">
+                        <div className="col-span-12 md:col-span-6">
+                          <label className="text-sm">Font</label>
+                          <input
+                            className="w-full border p-2 rounded mt-1 text-sm"
+                            value={templateStyleForm.fontFamily}
+                            onChange={(e) => setTemplateStyleForm({ ...templateStyleForm, fontFamily: e.target.value })}
+                          />
+                        </div>
+                        <div className="col-span-6 md:col-span-3">
+                          <label className="text-sm">Fontstørrelse (pt)</label>
+                          <input
+                            type="number"
+                            min="8"
+                            className="w-full border p-2 rounded mt-1 text-sm"
+                            value={templateStyleForm.fontSizePt}
+                            onChange={(e) => setTemplateStyleForm({ ...templateStyleForm, fontSizePt: e.target.value })}
+                          />
+                        </div>
+                        <div className="col-span-6 md:col-span-3">
+                          <label className="text-sm">Margin topp (mm)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            className="w-full border p-2 rounded mt-1 text-sm"
+                            value={templateStyleForm.marginTopMm}
+                            onChange={(e) => setTemplateStyleForm({ ...templateStyleForm, marginTopMm: e.target.value })}
+                          />
+                        </div>
+                        <div className="col-span-6 md:col-span-3">
+                          <label className="text-sm">Margin bunn (mm)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            className="w-full border p-2 rounded mt-1 text-sm"
+                            value={templateStyleForm.marginBottomMm}
+                            onChange={(e) => setTemplateStyleForm({ ...templateStyleForm, marginBottomMm: e.target.value })}
+                          />
+                        </div>
+                        <div className="col-span-12 md:col-span-3 flex items-end">
+                          <button
+                            className="px-3 py-2 bg-slate-800 text-white rounded text-sm w-full"
+                            onClick={() => {
+                              setTemplateConfig((prev) => {
+                                const base = prev && prev.mediahouses ? prev : defaultTemplateConfig();
+                                return {
+                                  ...base,
+                                  mediahouses: {
+                                    ...base.mediahouses,
+                                    [editingMediahouseKey]: {
+                                      ...base.mediahouses[editingMediahouseKey],
+                                      style: {
+                                        fontFamily: templateStyleForm.fontFamily,
+                                        fontSizePt: Number(templateStyleForm.fontSizePt) || 12,
+                                        marginTopMm: Number(templateStyleForm.marginTopMm) || 0,
+                                        marginBottomMm: Number(templateStyleForm.marginBottomMm) || 0,
+                                      },
+                                    },
+                                  },
+                                };
+                              });
+                            }}
+                          >
+                            Lagre endringer
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="col-span-12 md:col-span-6">
+                    <div className="text-sm font-semibold mb-2">Takkeannonse — Digital</div>
+                    <button
+                      className={`w-full text-left border rounded p-4 bg-white ${canManageUsers ? "hover:bg-slate-50" : ""}`}
+                      onClick={() => setPreviewEditType("thanks")}
+                      disabled={!canManageUsers}
+                    >
+                      <div className="text-xs text-slate-500 mb-2">Standard: {safeTemplateConfig.mediahouses[editingMediahouseKey]?.defaultThanks}</div>
+                      <div
+                        className="border-2 border-slate-300 rounded p-4 text-center"
+                        style={{
+                          fontFamily: templateStyleForm.fontFamily,
+                          fontSize: `${ptToPx(templateStyleForm.fontSizePt)}px`,
+                          paddingTop: `${mmToPx(templateStyleForm.marginTopMm)}px`,
+                          paddingBottom: `${mmToPx(templateStyleForm.marginBottomMm)}px`,
+                        }}
+                      >
+                        <div className="text-lg font-semibold">Hjertelig takk</div>
+                        <div className="text-xs text-slate-500 mt-2">Digital visning</div>
+                      </div>
+                    </button>
+                  </div>
+                  <div className="col-span-12 md:col-span-6">
+                    <div className="text-sm font-semibold mb-2">Takkeannonse — Print</div>
+                    <button
+                      className={`w-full text-left border rounded p-4 bg-white ${canManageUsers ? "hover:bg-slate-50" : ""}`}
+                      onClick={() => setPreviewEditType("thanks")}
+                      disabled={!canManageUsers}
+                    >
+                      <div className="text-xs text-slate-500 mb-2">Standard: {safeTemplateConfig.mediahouses[editingMediahouseKey]?.defaultThanks}</div>
+                      <div
+                        className="border-2 border-slate-300 rounded p-4 text-center"
+                        style={{
+                          fontFamily: templateStyleForm.fontFamily,
+                          fontSize: `${ptToPx(templateStyleForm.fontSizePt)}px`,
+                          paddingTop: `${mmToPx(templateStyleForm.marginTopMm)}px`,
+                          paddingBottom: `${mmToPx(templateStyleForm.marginBottomMm)}px`,
+                        }}
+                      >
+                        <div className="text-lg font-semibold">Hjertelig takk</div>
+                        <div className="text-xs text-slate-500 mt-2">Print visning</div>
+                      </div>
+                    </button>
+                  </div>
+                  {previewEditType === "thanks" ? (
+                    <div className="col-span-12">
+                      <div className="text-sm font-semibold mb-2">Juster mal (Takkeannonse)</div>
+                      <div className="grid grid-cols-12 gap-3">
+                        <div className="col-span-12 md:col-span-6">
+                          <label className="text-sm">Font</label>
+                          <input
+                            className="w-full border p-2 rounded mt-1 text-sm"
+                            value={templateStyleForm.fontFamily}
+                            onChange={(e) => setTemplateStyleForm({ ...templateStyleForm, fontFamily: e.target.value })}
+                          />
+                        </div>
+                        <div className="col-span-6 md:col-span-3">
+                          <label className="text-sm">Fontstørrelse (pt)</label>
+                          <input
+                            type="number"
+                            min="8"
+                            className="w-full border p-2 rounded mt-1 text-sm"
+                            value={templateStyleForm.fontSizePt}
+                            onChange={(e) => setTemplateStyleForm({ ...templateStyleForm, fontSizePt: e.target.value })}
+                          />
+                        </div>
+                        <div className="col-span-6 md:col-span-3">
+                          <label className="text-sm">Margin topp (mm)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            className="w-full border p-2 rounded mt-1 text-sm"
+                            value={templateStyleForm.marginTopMm}
+                            onChange={(e) => setTemplateStyleForm({ ...templateStyleForm, marginTopMm: e.target.value })}
+                          />
+                        </div>
+                        <div className="col-span-6 md:col-span-3">
+                          <label className="text-sm">Margin bunn (mm)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            className="w-full border p-2 rounded mt-1 text-sm"
+                            value={templateStyleForm.marginBottomMm}
+                            onChange={(e) => setTemplateStyleForm({ ...templateStyleForm, marginBottomMm: e.target.value })}
+                          />
+                        </div>
+                        <div className="col-span-12 md:col-span-3 flex items-end">
+                          <button
+                            className="px-3 py-2 bg-slate-800 text-white rounded text-sm w-full"
+                            onClick={() => {
+                              setTemplateConfig((prev) => {
+                                const base = prev && prev.mediahouses ? prev : defaultTemplateConfig();
+                                return {
+                                  ...base,
+                                  mediahouses: {
+                                    ...base.mediahouses,
+                                    [editingMediahouseKey]: {
+                                      ...base.mediahouses[editingMediahouseKey],
+                                      style: {
+                                        fontFamily: templateStyleForm.fontFamily,
+                                        fontSizePt: Number(templateStyleForm.fontSizePt) || 12,
+                                        marginTopMm: Number(templateStyleForm.marginTopMm) || 0,
+                                        marginBottomMm: Number(templateStyleForm.marginBottomMm) || 0,
+                                      },
+                                    },
+                                  },
+                                };
+                              });
+                            }}
+                          >
+                            Lagre endringer
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // --- Helpers & sample data ---
 function sampleOppdrag() {
   const now = new Date().toISOString();
@@ -2201,6 +3555,28 @@ function sampleOppdrag() {
   ];
 }
 
+function sampleRawData(data) {
+  const id = data?.id || "0000";
+  const leverandor = data?.leverandor || "Leverandor";
+  const type = data?.type || "Død";
+  const navn = data?.navn || "Navn";
+  const publisering = data?.publisering || "2026-01-01T01:00:00";
+  const publikasjon = data?.publikasjon || "Publikasjon";
+  return `<ad>
+  <id>${id}</id>
+  <supplier>${leverandor}</supplier>
+  <type>${type}</type>
+  <name>${navn}</name>
+  <publication>${publikasjon}</publication>
+  <publication_date>${publisering}</publication_date>
+  <content>
+    <text>Vår kjære</text>
+    <text>${navn}</text>
+    <text>${publikasjon}</text>
+  </content>
+</ad>`;
+}
+
 function sampleAnnonser() {
   return [
     {
@@ -2213,6 +3589,14 @@ function sampleAnnonser() {
       endret: "2026-01-26T10:32:49",
       publikasjon: "Marsteinen",
       status: "I kø",
+      rawData: sampleRawData({
+        id: "19384",
+        leverandor: "Memcare",
+        type: "Død",
+        navn: "Reydun Wegner Lundekvam",
+        publisering: "2026-01-29T01:00:00",
+        publikasjon: "Marsteinen",
+      }),
     },
     {
       id: "19297",
@@ -2224,6 +3608,14 @@ function sampleAnnonser() {
       endret: "2026-01-25T01:00:01",
       publikasjon: "Fædrelandsvennen",
       status: "I kø",
+      rawData: sampleRawData({
+        id: "19297",
+        leverandor: "Memcare",
+        type: "Død",
+        navn: "Arnulf Georg Gabrielsen",
+        publisering: "2026-01-28T01:00:00",
+        publikasjon: "Fædrelandsvennen",
+      }),
     },
     {
       id: "3048214",
@@ -2235,6 +3627,14 @@ function sampleAnnonser() {
       endret: "2026-01-26T10:32:27",
       publikasjon: "Adresseavisen",
       status: "I kø",
+      rawData: sampleRawData({
+        id: "3048214",
+        leverandor: "Adstate",
+        type: "Død",
+        navn: "Ove Henning Berdahl",
+        publisering: "2026-01-26T01:00:00",
+        publikasjon: "Adresseavisen",
+      }),
     },
     {
       id: "3048316",
@@ -2246,6 +3646,14 @@ function sampleAnnonser() {
       endret: "2026-01-26T10:32:27",
       publikasjon: "Agderposten",
       status: "I kø",
+      rawData: sampleRawData({
+        id: "3048316",
+        leverandor: "Adstate",
+        type: "Takk",
+        navn: "Mario V. Urquizo",
+        publisering: "2026-01-26T01:00:00",
+        publikasjon: "Agderposten",
+      }),
     },
     {
       id: "A-oppdrag-1",
@@ -2323,6 +3731,145 @@ function sampleImportLogs() {
   ];
 }
 
+function mmToPx(mm) {
+  return Math.round(Number(mm || 0) * 3.78);
+}
+
+function ptToPx(pt) {
+  return Math.round(Number(pt || 0) * 1.333);
+}
+
+function defaultTemplateConfig() {
+  const mediahouses = {
+    adresseavisen: {
+      name: "Adresseavisen",
+      publications: ["Adresseavisen"],
+      deathTemplates: ["1sp", "2sp", "1sp dobbelannonser"],
+      thanksTemplates: ["Takk 1sp", "Takk 1sp m/symbol", "Takk 2sp", "Takk 2sp m/symbol"],
+      defaultDeath: "1sp",
+      defaultThanks: "Takk 1sp",
+      style: { fontFamily: "Times New Roman", fontSizePt: 12, marginTopMm: 8, marginBottomMm: 8 },
+    },
+    faedrelandsvennen: {
+      name: "Fædrelandsvennen",
+      publications: ["Fædrelandsvennen"],
+      deathTemplates: ["1sp", "2sp", "1sp dobbelannonser"],
+      thanksTemplates: ["Takk 1sp", "Takk 1sp m/symbol", "Takk 2sp", "Takk 2sp m/symbol"],
+      defaultDeath: "1sp",
+      defaultThanks: "Takk 1sp",
+      style: { fontFamily: "Times New Roman", fontSizePt: 12, marginTopMm: 8, marginBottomMm: 8 },
+    },
+    sunnmorsposten: {
+      name: "Sunnmørsposten",
+      publications: ["Sunnmørsposten"],
+      deathTemplates: ["1sp", "2sp", "1sp dobbelannonser"],
+      thanksTemplates: ["Takk 1sp", "Takk 1sp m/symbol", "Takk 2sp", "Takk 2sp m/symbol"],
+      defaultDeath: "1sp",
+      defaultThanks: "Takk 1sp",
+      style: { fontFamily: "Times New Roman", fontSizePt: 12, marginTopMm: 8, marginBottomMm: 8 },
+    },
+    harstadtidende: {
+      name: "Harstad Tidende",
+      publications: ["Harstad Tidende"],
+      deathTemplates: ["1sp", "2sp", "1sp dobbelannonser"],
+      thanksTemplates: ["Takk 1sp", "Takk 1sp m/symbol", "Takk 2sp", "Takk 2sp m/symbol"],
+      defaultDeath: "1sp",
+      defaultThanks: "Takk 1sp",
+      style: { fontFamily: "Times New Roman", fontSizePt: 12, marginTopMm: 8, marginBottomMm: 8 },
+    },
+    nordlys: {
+      name: "Nordlys",
+      publications: ["Nordlys"],
+      deathTemplates: ["1sp", "2sp", "1sp dobbelannonser"],
+      thanksTemplates: ["Takk 1sp", "Takk 1sp m/symbol", "Takk 2sp", "Takk 2sp m/symbol"],
+      defaultDeath: "1sp",
+      defaultThanks: "Takk 1sp",
+      style: { fontFamily: "Times New Roman", fontSizePt: 12, marginTopMm: 8, marginBottomMm: 8 },
+    },
+    ifinnmark: {
+      name: "iFinnmark",
+      publications: ["iFinnmark", "Finnmarksposten", "Altaposten", "Finnmark Dagblad"],
+      deathTemplates: ["1sp", "2sp", "1sp dobbelannonser"],
+      thanksTemplates: ["Takk 1sp", "Takk 1sp m/symbol", "Takk 2sp", "Takk 2sp m/symbol"],
+      defaultDeath: "1sp",
+      defaultThanks: "Takk 1sp",
+      style: { fontFamily: "Times New Roman", fontSizePt: 12, marginTopMm: 8, marginBottomMm: 8 },
+    },
+    tromsfylke: {
+      name: "Troms Folkeblad",
+      publications: ["Troms Folkeblad"],
+      deathTemplates: ["1sp", "2sp", "1sp dobbelannonser"],
+      thanksTemplates: ["Takk 1sp", "Takk 1sp m/symbol", "Takk 2sp", "Takk 2sp m/symbol"],
+      defaultDeath: "1sp",
+      defaultThanks: "Takk 1sp",
+      style: { fontFamily: "Times New Roman", fontSizePt: 12, marginTopMm: 8, marginBottomMm: 8 },
+    },
+    agderposten: {
+      name: "Agderposten",
+      publications: ["Agderposten"],
+      deathTemplates: ["1sp", "2sp", "1sp dobbelannonser"],
+      thanksTemplates: ["Takk 1sp", "Takk 1sp m/symbol", "Takk 2sp", "Takk 2sp m/symbol"],
+      defaultDeath: "1sp",
+      defaultThanks: "Takk 1sp",
+      style: { fontFamily: "Times New Roman", fontSizePt: 12, marginTopMm: 8, marginBottomMm: 8 },
+    },
+    marsteinen: {
+      name: "Marsteinen",
+      publications: ["Marsteinen"],
+      deathTemplates: ["1sp", "2sp", "1sp dobbelannonser"],
+      thanksTemplates: ["Takk 1sp", "Takk 1sp m/symbol", "Takk 2sp", "Takk 2sp m/symbol"],
+      defaultDeath: "1sp",
+      defaultThanks: "Takk 1sp",
+      style: { fontFamily: "Times New Roman", fontSizePt: 12, marginTopMm: 8, marginBottomMm: 8 },
+    },
+  };
+
+  return {
+    mediahouses,
+    defaults: {
+      death: ["1sp", "2sp", "1sp dobbelannonser"],
+      thanks: ["Takk 1sp", "Takk 1sp m/symbol", "Takk 2sp", "Takk 2sp m/symbol"],
+    },
+  };
+}
+
+function getMediahouseForPublication(publication, templateConfig) {
+  if (!publication) return null;
+  const config = templateConfig && templateConfig.mediahouses ? templateConfig : defaultTemplateConfig();
+  return Object.values(config.mediahouses).find((m) => m.publications.includes(publication)) || null;
+}
+
+function getTemplateOptionsForPublication(publication, type, templateConfig) {
+  const config = templateConfig && templateConfig.mediahouses ? templateConfig : defaultTemplateConfig();
+  const mediahouse = getMediahouseForPublication(publication, config);
+  if (!mediahouse) {
+    return type === "Takk" ? config.defaults.thanks : config.defaults.death;
+  }
+  return type === "Takk" ? mediahouse.thanksTemplates : mediahouse.deathTemplates;
+}
+
+function getDefaultTemplateForPublication(publication, type, templateConfig) {
+  const config = templateConfig && templateConfig.mediahouses ? templateConfig : defaultTemplateConfig();
+  const mediahouse = getMediahouseForPublication(publication, config);
+  if (!mediahouse) {
+    return type === "Takk" ? config.defaults.thanks[0] : config.defaults.death[0];
+  }
+  return type === "Takk" ? mediahouse.defaultThanks : mediahouse.defaultDeath;
+}
+
+function defaultSymbolLibrary() {
+  return [
+    { id: "sym-1", label: "Kors", value: "✝", type: "text", sizeDeathMm: 18, sizeThanksMm: 16 },
+    { id: "sym-2", label: "Hjerte", value: "❤", type: "text", sizeDeathMm: 18, sizeThanksMm: 16 },
+    { id: "sym-3", label: "Fugl", value: "🕊", type: "text", sizeDeathMm: 18, sizeThanksMm: 16 },
+    { id: "sym-4", label: "Rose", value: "🌹", type: "text", sizeDeathMm: 18, sizeThanksMm: 16 },
+    { id: "sym-5", label: "Stjerne", value: "✶", type: "text", sizeDeathMm: 18, sizeThanksMm: 16 },
+    { id: "sym-6", label: "Blomst", value: "✿", type: "text", sizeDeathMm: 18, sizeThanksMm: 16 },
+    { id: "sym-7", label: "Kors 2", value: "✚", type: "text", sizeDeathMm: 18, sizeThanksMm: 16 },
+    { id: "sym-8", label: "Løv", value: "❧", type: "text", sizeDeathMm: 18, sizeThanksMm: 16 },
+  ];
+}
+
 function defaultAd() {
   return {
     publication: "",
@@ -2331,7 +3878,10 @@ function defaultAd() {
     annonseType: "Død",
     template: "",
     symbol: "✝",
+    symbolImage: "",
     symbolSize: 24,
+    symbolLockId: "",
+    symbolSizeLocked: false,
     intro: "",
     title: "",
     firstName: "",
