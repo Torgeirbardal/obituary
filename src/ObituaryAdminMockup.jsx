@@ -25,6 +25,7 @@ export default function ObituaryAdminMockup() {
   const [suggestionBank, setSuggestionBank] = useState(defaultSuggestionBank());
   const [symbolLibrary, setSymbolLibrary] = useState(defaultSymbolLibrary());
   const [templateConfig, setTemplateConfig] = useState(defaultTemplateConfig());
+  const [auditLog, setAuditLog] = useState([]);
 
   // Kept for future editor work
   const [editorAd, setEditorAd] = useState(defaultAd());
@@ -184,10 +185,82 @@ export default function ObituaryAdminMockup() {
     openEditorWithOppdrag(op, annonceId);
   }
 
-  function approveAnnonce(id) {
+  function logAction({ module, entity, entityId, action, details }) {
+    const entry = {
+      id: `log-${Math.random().toString(36).slice(2, 9)}`,
+      timestamp: new Date().toISOString(),
+      user: currentUser,
+      module,
+      entity,
+      entityId,
+      action,
+      details,
+    };
+    setAuditLog((prev) => [entry, ...prev]);
+  }
+
+  useEffect(() => {
+    if (auditLog.length) return;
+    const seed = [];
+    oppdragList.forEach((op) => {
+      seed.push({
+        id: `seed-op-${op.id}`,
+        timestamp: op.createdAt || new Date().toISOString(),
+        user: "system",
+        module: "Oppdrag",
+        entity: "Oppdrag",
+        entityId: op.id,
+        action: "Oppdrag generert",
+        details: `${op.avdoede?.fornavn || ""} ${op.avdoede?.etternavn || ""}`.trim(),
+      });
+    });
+    annonseList.forEach((a) => {
+      if (a.leverandor && a.leverandor !== "Oppdrag") {
+        seed.push({
+          id: `seed-imp-${a.id}`,
+          timestamp: a.opprettet || new Date().toISOString(),
+          user: "system",
+          module: "Annonser",
+          entity: "Annonce",
+          entityId: a.id,
+          action: "Annonce importert",
+          details: a.leverandor,
+        });
+      }
+    });
+    if (seed.length) {
+      setAuditLog(seed);
+    }
+  }, [auditLog.length, oppdragList, annonseList]);
+
+  function updateAnnonce(annonceId, updates, logInfo) {
+    const now = new Date().toISOString();
     setAnnonceList((s) =>
-      s.map((a) => (a.id === id ? { ...a, status: "Godkjent", endret: new Date().toISOString() } : a))
+      s.map((a) =>
+        a.id === annonceId
+          ? {
+              ...a,
+              ...updates,
+              endret: updates.endret || now,
+              lastEditedBy: currentUser,
+              lastEditedAt: now,
+            }
+          : a
+      )
     );
+    if (logInfo) {
+      logAction({
+        module: "Annonser",
+        entity: "Annonce",
+        entityId: annonceId,
+        action: logInfo.action,
+        details: logInfo.details,
+      });
+    }
+  }
+
+  function approveAnnonce(id) {
+    updateAnnonce(id, { status: "Godkjent" }, { action: "Godkjent annonse" });
   }
 
   function openEditorForAnnonce(annonce) {
@@ -205,19 +278,13 @@ export default function ObituaryAdminMockup() {
   }
 
   function updatePublisering(annonceId, dato) {
-    setAnnonceList((s) =>
-      s.map((a) => (a.id === annonceId ? { ...a, publisering: dato, endret: new Date().toISOString() } : a))
-    );
+    updateAnnonce(annonceId, { publisering: dato }, { action: "Endret publiseringsdato", details: dato });
     setEditingAnnonceDate(null);
   }
 
   function markAnnonceSent() {
     if (!selectedAnnonceId) return;
-    setAnnonceList((s) =>
-      s.map((a) =>
-        a.id === selectedAnnonceId ? { ...a, status: "Sendt til godkjenning", endret: new Date().toISOString() } : a
-      )
-    );
+    updateAnnonce(selectedAnnonceId, { status: "Sendt til godkjenning" }, { action: "Sendt til godkjenning" });
   }
 
   function addSuggestion(field, text) {
@@ -286,23 +353,21 @@ export default function ObituaryAdminMockup() {
             initialStep={getSelectedAnnonceStatus(annonseList, selectedAnnonceId) === "Sendt til godkjenning" ? 4 : 1}
             rejectComment={getSelectedAnnonce(annonseList, selectedAnnonceId)?.rejectComment || ""}
             onApproveOrder={() => {
-              setAnnonceList((s) =>
-                s.map((a) => (a.id === selectedAnnonceId ? { ...a, status: "Godkjent", endret: new Date().toISOString() } : a))
-              );
+              updateAnnonce(selectedAnnonceId, { status: "Godkjent" }, { action: "Godkjent annonse" });
               setView("annonser");
             }}
             onRejectOrder={(comment) => {
-              setAnnonceList((s) =>
-                s.map((a) =>
-                  a.id === selectedAnnonceId
-                    ? { ...a, status: "Ikke godkjent", endret: new Date().toISOString(), rejectComment: comment }
-                    : a
-                )
+              updateAnnonce(
+                selectedAnnonceId,
+                { status: "Ikke godkjent", rejectComment: comment },
+                { action: "Underkjent annonse", details: comment }
               );
               setView("annonser");
             }}
             symbolLibrary={symbolLibrary}
             templateConfig={templateConfig}
+            auditLog={auditLog}
+            currentAnnonceId={selectedAnnonceId}
           />
         )}
 
@@ -334,6 +399,8 @@ export default function ObituaryAdminMockup() {
             setSymbolLibrary={setSymbolLibrary}
             templateConfig={templateConfig}
             setTemplateConfig={setTemplateConfig}
+            auditLog={auditLog}
+            onLogAction={logAction}
           />
         )}
         {view === "external-annonce" && (
@@ -342,22 +409,19 @@ export default function ObituaryAdminMockup() {
             onBack={() => setView("annonser")}
             onApprove={() => {
               if (!selectedExternalAnnonce) return;
-              setAnnonceList((s) =>
-                s.map((a) => (a.id === selectedExternalAnnonce.id ? { ...a, status: "Godkjent", endret: new Date().toISOString() } : a))
-              );
+              updateAnnonce(selectedExternalAnnonce.id, { status: "Godkjent" }, { action: "Godkjent annonse" });
               setView("annonser");
             }}
             onReject={(comment) => {
               if (!selectedExternalAnnonce) return;
-              setAnnonceList((s) =>
-                s.map((a) =>
-                  a.id === selectedExternalAnnonce.id
-                    ? { ...a, status: "Ikke godkjent", endret: new Date().toISOString(), rejectComment: comment }
-                    : a
-                )
+              updateAnnonce(
+                selectedExternalAnnonce.id,
+                { status: "Ikke godkjent", rejectComment: comment },
+                { action: "Underkjent annonse", details: comment }
               );
               setView("annonser");
             }}
+            auditLog={auditLog}
           />
         )}
         {view === "forside" && <Placeholder title="Forside" />}
@@ -721,6 +785,7 @@ function AnnonserView({ annonseList, onCreate, onApprove, onEdit, onOpenExternal
               <th className="p-3">Endret</th>
               <th className="p-3">Publikasjon</th>
               <th className="p-3">Status</th>
+              <th className="p-3">Sist endret av</th>
               <th className="p-3 text-right">Handlinger</th>
             </tr>
           </thead>
@@ -752,6 +817,10 @@ function AnnonserView({ annonseList, onCreate, onApprove, onEdit, onOpenExternal
                   >
                     {a.status}
                   </span>
+                </td>
+                <td className="p-3">
+                  <div className="text-xs text-slate-500">{a.lastEditedBy || "-"}</div>
+                  <div className="text-xs text-slate-400">{a.lastEditedAt ? formatDateTime(a.lastEditedAt) : ""}</div>
                 </td>
                 <td className="p-3 text-right">
                   <div className="relative inline-block text-left">
@@ -823,8 +892,9 @@ function AnnonserView({ annonseList, onCreate, onApprove, onEdit, onOpenExternal
   );
 }
 
-function ExternalAnnonceDetailView({ annonce, onBack, onApprove, onReject }) {
+function ExternalAnnonceDetailView({ annonce, onBack, onApprove, onReject, auditLog }) {
   const [rejectComment, setRejectComment] = useState("");
+  const history = (auditLog || []).filter((entry) => entry.entityId === annonce?.id);
 
   if (!annonce) {
     return (
@@ -856,6 +926,10 @@ function ExternalAnnonceDetailView({ annonce, onBack, onApprove, onReject }) {
           </button>
         </div>
       </div>
+      <div className="mb-4 text-xs text-slate-500">
+        Sist endret av: {annonce.lastEditedBy || "-"}
+        {annonce.lastEditedAt ? ` · ${formatDateTime(annonce.lastEditedAt)}` : ""}
+      </div>
 
       <div className="grid grid-cols-12 gap-6">
         <div className="col-span-12 lg:col-span-7">
@@ -864,6 +938,35 @@ function ExternalAnnonceDetailView({ annonce, onBack, onApprove, onReject }) {
             <pre className="text-xs bg-slate-50 border rounded p-3 max-h-[520px] overflow-auto whitespace-pre-wrap">
               {annonce.rawData || sampleRawData(annonce)}
             </pre>
+          </div>
+          <div className="bg-white border rounded p-4">
+            <div className="text-sm text-slate-600 mb-2">Historikk</div>
+            {history.length === 0 ? (
+              <div className="text-sm text-slate-500">Ingen endringer logget ennå.</div>
+            ) : (
+              <div className="border rounded">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="p-3 text-left">Tidspunkt</th>
+                      <th className="p-3 text-left">Bruker</th>
+                      <th className="p-3 text-left">Hendelse</th>
+                      <th className="p-3 text-left">Detaljer</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.map((entry) => (
+                      <tr key={entry.id} className="border-t">
+                        <td className="p-3">{formatDateTime(entry.timestamp)}</td>
+                        <td className="p-3">{entry.user}</td>
+                        <td className="p-3">{entry.action}</td>
+                        <td className="p-3 text-slate-500">{entry.details || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1202,6 +1305,8 @@ function EditorView({
   rejectComment,
   symbolLibrary,
   templateConfig,
+  auditLog,
+  currentAnnonceId,
 }) {
   const [step, setStep] = useState(1);
   const [showSymbolBank, setShowSymbolBank] = useState(false);
@@ -1422,6 +1527,10 @@ function EditorView({
     );
   }
 
+  const history = currentAnnonceId
+    ? (auditLog || []).filter((entry) => entry.entityId === currentAnnonceId)
+    : [];
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
@@ -1467,6 +1576,34 @@ function EditorView({
         {step === 1 && !step1Valid ? <div className="text-xs text-red-600 mt-2">Velg publikasjon og begge publiseringsdatoer.</div> : null}
         {step === 2 && !step2Valid ? <div className="text-xs text-red-600 mt-2">Velg annonsetype og mal.</div> : null}
       </div>
+
+      {history.length > 0 ? (
+        <div className="bg-white border rounded p-4 mb-4">
+          <div className="text-sm text-slate-600 mb-2">Historikk</div>
+          <div className="border rounded">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="p-3 text-left">Tidspunkt</th>
+                  <th className="p-3 text-left">Bruker</th>
+                  <th className="p-3 text-left">Hendelse</th>
+                  <th className="p-3 text-left">Detaljer</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((entry) => (
+                  <tr key={entry.id} className="border-t">
+                    <td className="p-3">{formatDateTime(entry.timestamp)}</td>
+                    <td className="p-3">{entry.user}</td>
+                    <td className="p-3">{entry.action}</td>
+                    <td className="p-3 text-slate-500">{entry.details || "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
 
       {step === 1 && (
         <div className="bg-white border rounded p-6">
@@ -2393,7 +2530,7 @@ function Placeholder({ title, contentClass }) {
   );
 }
 
-function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, templateConfig, setTemplateConfig }) {
+function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, templateConfig, setTemplateConfig, auditLog, onLogAction }) {
   const roleOptions = ["Godkjenner", "Produsent", "Administrator", "Superadministrator"];
   const regionOptions = ["Midt", "Nord", "Sør", "Vest", "Øst"];
   const initialUsers = [
@@ -2444,6 +2581,7 @@ function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, template
   const isApprover = currentUserRecord.role === "Godkjenner";
   const canManageUsers = isSuperAdmin || isAdmin;
   const [adminTab, setAdminTab] = useState("brukere");
+  const [logSearch, setLogSearch] = useState("");
   const safeSymbolLibrary = symbolLibrary && symbolLibrary.length ? symbolLibrary : defaultSymbolLibrary();
   const safeTemplateConfig = templateConfig && templateConfig.mediahouses ? templateConfig : defaultTemplateConfig();
   const hasUnsavedChanges = useMemo(
@@ -2514,6 +2652,13 @@ function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, template
         },
       ]);
     }
+    onLogAction?.({
+      module: "Administrasjon",
+      entity: "Bruker",
+      entityId: editingUserId || "ny",
+      action: editingUserId ? "Oppdatert bruker" : "Opprettet bruker",
+      details: `${userForm.name || "Ny bruker"} (${userForm.role})`,
+    });
     setShowUserModal(false);
   }
 
@@ -2553,6 +2698,13 @@ function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, template
           : sym
       )
     );
+    onLogAction?.({
+      module: "Administrasjon",
+      entity: "Symbol",
+      entityId: editingSymbolId,
+      action: "Oppdatert symbol",
+      details: symbolEditForm.label,
+    });
     setShowSymbolEditModal(false);
   }
 
@@ -2623,6 +2775,13 @@ function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, template
         filename: symbolForm.file?.name || "symbol.png",
       },
     ]);
+    onLogAction?.({
+      module: "Administrasjon",
+      entity: "Symbol",
+      entityId: label,
+      action: "Opprettet symbol",
+      details: symbolForm.file?.name || "symbol.png",
+    });
     setShowSymbolModal(false);
   }
 
@@ -2631,13 +2790,6 @@ function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, template
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-2xl font-bold">Administrasjon</h3>
         <div className="flex items-center gap-2">
-          <button
-            className={`px-4 py-2 rounded ${canManageUsers ? "bg-slate-800 text-white" : "bg-slate-200 text-slate-500 cursor-not-allowed"}`}
-            onClick={openCreateUser}
-            disabled={!canManageUsers}
-          >
-            Opprett ny bruker
-          </button>
           <button
             className={`px-4 py-2 rounded ${canManageUsers && hasUnsavedChanges ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-500 cursor-not-allowed"}`}
             onClick={handleSaveChanges}
@@ -2674,59 +2826,84 @@ function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, template
           >
             Symbolbibliotek
           </button>
+          <button
+            className={`px-3 py-1 rounded ${adminTab === "logg" ? "bg-slate-100 font-semibold" : "hover:bg-slate-50"}`}
+            onClick={() => setAdminTab("logg")}
+          >
+            Endringslogg
+          </button>
         </div>
 
         {adminTab === "brukere" && (
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="p-3 text-left">Navn</th>
-                <th className="p-3 text-left">Mediehusregion</th>
-                <th className="p-3 text-left">Rolle</th>
-                <th className="p-3 text-left">Handling</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((user) => (
-                <tr key={user.id} className="border-t hover:bg-slate-50">
-                  <td className="p-3">
-                    <div className="font-medium">{user.name}</div>
-                    {user.username === currentUser ? (
-                      <div className="text-xs text-slate-500">Innlogget</div>
-                    ) : null}
-                  </td>
-                  <td className="p-3">{user.region}</td>
-                  <td className="p-3">
-                    <select
-                      className="border p-2 rounded text-sm"
-                      value={user.role}
-                      disabled={!canEditUser(user)}
-                      onChange={(e) =>
-                        setUsers((prev) =>
-                          prev.map((u) => (u.id === user.id ? { ...u, role: e.target.value } : u))
-                        )
-                      }
-                    >
-                      {roleOptions.map((role) => (
-                        <option key={role} value={role}>
-                          {role}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="p-3">
-                    <button
-                      className={`px-3 py-1 border rounded text-sm ${canEditUser(user) ? "" : "text-slate-400 cursor-not-allowed"}`}
-                      onClick={() => openEditUser(user)}
-                      disabled={!canEditUser(user)}
-                    >
-                      Rediger
-                    </button>
-                  </td>
+          <div>
+            <div className="p-3 border-b flex justify-end">
+              <button
+                className={`px-4 py-2 rounded ${canManageUsers ? "bg-slate-800 text-white" : "bg-slate-200 text-slate-500 cursor-not-allowed"}`}
+                onClick={openCreateUser}
+                disabled={!canManageUsers}
+              >
+                Opprett ny bruker
+              </button>
+            </div>
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="p-3 text-left">Navn</th>
+                  <th className="p-3 text-left">Mediehusregion</th>
+                  <th className="p-3 text-left">Rolle</th>
+                  <th className="p-3 text-left">Handling</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {users.map((user) => (
+                  <tr key={user.id} className="border-t hover:bg-slate-50">
+                    <td className="p-3">
+                      <div className="font-medium">{user.name}</div>
+                      {user.username === currentUser ? (
+                        <div className="text-xs text-slate-500">Innlogget</div>
+                      ) : null}
+                    </td>
+                    <td className="p-3">{user.region}</td>
+                    <td className="p-3">
+                      <select
+                        className="border p-2 rounded text-sm"
+                        value={user.role}
+                        disabled={!canEditUser(user)}
+                        onChange={(e) => {
+                          const nextRole = e.target.value;
+                          setUsers((prev) =>
+                            prev.map((u) => (u.id === user.id ? { ...u, role: nextRole } : u))
+                          );
+                          onLogAction?.({
+                            module: "Administrasjon",
+                            entity: "Bruker",
+                            entityId: user.id,
+                            action: "Endret rolle",
+                            details: `${user.role} -> ${nextRole}`,
+                          });
+                        }}
+                      >
+                        {roleOptions.map((role) => (
+                          <option key={role} value={role}>
+                            {role}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="p-3">
+                      <button
+                        className={`px-3 py-1 border rounded text-sm ${canEditUser(user) ? "" : "text-slate-400 cursor-not-allowed"}`}
+                        onClick={() => openEditUser(user)}
+                        disabled={!canEditUser(user)}
+                      >
+                        Rediger
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
 
         {adminTab === "maler" && (
@@ -2759,7 +2936,7 @@ function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, template
                                   onClick={() => openTemplateEditor(key)}
                                   disabled={!canManageUsers}
                                 >
-                                  Rediger maler
+                                  Tilgjengelige maler
                                 </button>
                                 <button
                                   className="px-3 py-1 border rounded text-sm"
@@ -2853,6 +3030,13 @@ function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, template
                           if (!canManageUsers) return;
                           if (confirm("Slett symbol?")) {
                             setSymbolLibrary((prev) => (prev || []).filter((s) => s.id !== symbol.id));
+                            onLogAction?.({
+                              module: "Administrasjon",
+                              entity: "Symbol",
+                              entityId: symbol.id,
+                              action: "Slettet symbol",
+                              details: symbol.label,
+                            });
                           }
                         }}
                         onMouseDown={(e) => e.stopPropagation()}
@@ -2868,6 +3052,52 @@ function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, template
             ) : (
               <div className="text-sm text-slate-500">Ingen tilgang til symbolbibliotek.</div>
             )}
+          </div>
+        )}
+        {adminTab === "logg" && (
+          <div className="p-6">
+            <div className="mb-3">
+              <input
+                className="w-full border p-2 rounded text-sm"
+                placeholder="Søk i endringslogg"
+                value={logSearch}
+                onChange={(e) => setLogSearch(e.target.value)}
+              />
+            </div>
+            <div className="border rounded">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="p-3 text-left">Tidspunkt</th>
+                    <th className="p-3 text-left">Bruker</th>
+                    <th className="p-3 text-left">Modul</th>
+                    <th className="p-3 text-left">Hendelse</th>
+                    <th className="p-3 text-left">Detaljer</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(auditLog || [])
+                    .filter((entry) => {
+                      const q = logSearch.trim().toLowerCase();
+                      if (!q) return true;
+                      const hay = `${entry.user} ${entry.module} ${entry.action} ${entry.details || ""}`.toLowerCase();
+                      return hay.includes(q);
+                    })
+                    .map((entry) => (
+                      <tr key={entry.id} className="border-t">
+                        <td className="p-3">{formatDateTime(entry.timestamp)}</td>
+                        <td className="p-3">{entry.user}</td>
+                        <td className="p-3">{entry.module}</td>
+                        <td className="p-3">{entry.action}</td>
+                        <td className="p-3 text-slate-500">{entry.details || "-"}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+              {(!auditLog || auditLog.length === 0) && (
+                <div className="p-3 text-sm text-slate-500">Ingen endringer logget ennå.</div>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -3349,6 +3579,13 @@ function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, template
                                   },
                                 };
                               });
+                              onLogAction?.({
+                                module: "Administrasjon",
+                                entity: "Maler",
+                                entityId: editingMediahouseKey,
+                                action: "Oppdatert malstil",
+                                details: `${templateStyleForm.fontFamily}, ${templateStyleForm.fontSizePt}pt`,
+                              });
                             }}
                           >
                             Lagre endringer
@@ -3464,6 +3701,13 @@ function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, template
                                     },
                                   },
                                 };
+                              });
+                              onLogAction?.({
+                                module: "Administrasjon",
+                                entity: "Maler",
+                                entityId: editingMediahouseKey,
+                                action: "Oppdatert malstil",
+                                details: `${templateStyleForm.fontFamily}, ${templateStyleForm.fontSizePt}pt`,
                               });
                             }}
                           >
