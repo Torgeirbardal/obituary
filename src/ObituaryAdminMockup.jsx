@@ -1313,6 +1313,7 @@ function EditorView({
   const [symbolSearch, setSymbolSearch] = useState("");
   const [suggestionField, setSuggestionField] = useState(null);
   const [suggestionSearch, setSuggestionSearch] = useState("");
+  const [livePreviewMode, setLivePreviewMode] = useState("digital");
   const [rejectCommentText, setRejectCommentText] = useState("");
 
   useEffect(() => {
@@ -1323,7 +1324,7 @@ function EditorView({
     if (!ad.relativesRows || ad.relativesRows.length === 0) {
       setAd((prev) => ({
         ...prev,
-        relativesRows: [{ id: "row-1", layout: "one", left: "", right: "" }],
+        relativesRows: [{ id: "row-1", layout: "one", left: "", right: "", leftSymbol: "", rightSymbol: "" }],
       }));
     }
   }, [ad.relativesRows, setAd]);
@@ -1423,24 +1424,118 @@ function EditorView({
     return [...filtered].sort((a, b) => b.count - a.count);
   }, [suggestionBank, suggestionField, suggestionSearch]);
 
+  const relativeSymbolSuffix = (symbol) => {
+    if (symbol === "deceased") return " ✝";
+    if (symbol === "pet") return " 🐾";
+    return "";
+  };
+
+  const formatRelativeName = (name, symbol) => {
+    if (!name) return "";
+    return `${name}${relativeSymbolSuffix(symbol)}`;
+  };
+
+  const heartMaskSvg =
+    "data:image/svg+xml;utf8," +
+    encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="white" d="M12 21s-6.716-4.674-9.388-8.296C.61 10.05 1.28 6.41 4.2 4.8c2.13-1.18 4.55-.66 5.94.8 1.39-1.46 3.81-1.98 5.94-.8 2.92 1.61 3.59 5.25 1.59 7.904C18.716 16.326 12 21 12 21z"/></svg>'
+    );
+
+  const getFrameDims = (size, shape) => {
+    const base = Math.max(24, size || 24);
+    if (shape === "oval") {
+      return { width: Math.round(base * 1.2), height: Math.round(base * 0.8) };
+    }
+    return { width: base, height: base };
+  };
+
+  const getFrameStyle = (shape, size) => {
+    const style = {
+      width: `${size.width}px`,
+      height: `${size.height}px`,
+      overflow: "hidden",
+      backgroundColor: "white",
+      cursor: "grab",
+    };
+    if (shape === "circle" || shape === "oval") {
+      return { ...style, borderRadius: "9999px" };
+    }
+    if (shape === "heart") {
+      return {
+        ...style,
+        WebkitMaskImage: `url("${heartMaskSvg}")`,
+        maskImage: `url("${heartMaskSvg}")`,
+        WebkitMaskSize: "100% 100%",
+        maskSize: "100% 100%",
+        WebkitMaskRepeat: "no-repeat",
+        maskRepeat: "no-repeat",
+      };
+    }
+    return { ...style, borderRadius: "4px" };
+  };
+
+  const handleImageMouseDown = (event) => {
+    if (!ad.symbolImage) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startOffsetX = ad.symbolImageOffsetX || 0;
+    const startOffsetY = ad.symbolImageOffsetY || 0;
+
+    const onMove = (moveEvent) => {
+      const dx = moveEvent.clientX - startX;
+      const dy = moveEvent.clientY - startY;
+      setAd((prev) => ({
+        ...prev,
+        symbolImageOffsetX: startOffsetX + dx,
+        symbolImageOffsetY: startOffsetY + dy,
+      }));
+    };
+
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const renderTopSymbol = () => {
+    if (!ad.symbolImage && !ad.symbol) return null;
+    if (!ad.symbolImage) {
+      return (
+        <div className="mb-3 text-center" style={{ fontSize: `${ad.symbolSize || 24}px` }}>
+          {ad.symbol}
+        </div>
+      );
+    }
+    const frameSize = getFrameDims(ad.symbolSize || 24, ad.symbolImageShape || "circle");
+    const frameStyle = getFrameStyle(ad.symbolImageShape || "circle", frameSize);
+    return (
+      <div className="mb-3 flex justify-center">
+        <div style={frameStyle} onMouseDown={handleImageMouseDown}>
+          <img
+            src={ad.symbolImage}
+            alt="Symbol"
+            className="block"
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              transform: `translate(${ad.symbolImageOffsetX || 0}px, ${ad.symbolImageOffsetY || 0}px) scale(${ad.symbolImageScale || 1})`,
+            }}
+          />
+        </div>
+      </div>
+    );
+  };
+
   function renderPreview() {
     if (ad.annonseType === "Takk") {
       return (
         <div className="border-2 border-slate-400 rounded p-6 bg-white">
-          {ad.symbolImage || ad.symbol ? (
-            <div className="mb-3 text-center" style={{ fontSize: `${ad.symbolSize || 24}px` }}>
-              {ad.symbolImage ? (
-                <img
-                  src={ad.symbolImage}
-                  alt="Symbol"
-                  style={{ width: `${ad.symbolSize || 24}px`, height: `${ad.symbolSize || 24}px` }}
-                  className="inline-block object-contain"
-                />
-              ) : (
-                ad.symbol
-              )}
-            </div>
-          ) : null}
+          {renderTopSymbol()}
           <div className="text-lg font-bold mb-2">Hjertelig takk</div>
           <div className="text-sm leading-relaxed mb-3">
             {ad.takkBody1 || ""}
@@ -1455,20 +1550,7 @@ function EditorView({
 
     return (
       <div className="border rounded p-6 text-center bg-white">
-        {ad.symbolImage || ad.symbol ? (
-          <div className="mb-3" style={{ fontSize: `${ad.symbolSize || 24}px` }}>
-            {ad.symbolImage ? (
-              <img
-                src={ad.symbolImage}
-                alt="Symbol"
-                style={{ width: `${ad.symbolSize || 24}px`, height: `${ad.symbolSize || 24}px` }}
-                className="inline-block object-contain"
-              />
-            ) : (
-              ad.symbol
-            )}
-          </div>
-        ) : null}
+        {renderTopSymbol()}
         {ad.intro ? <div className="text-sm italic mb-2">{ad.intro}</div> : null}
         {ad.title ? <div className="text-sm mb-1">{ad.title}</div> : null}
         {fullName ? <div className="text-2xl font-bold mb-1">{fullName}</div> : null}
@@ -1506,14 +1588,14 @@ function EditorView({
               if (row.layout === "two") {
                 return (
                   <div key={row.id} className="grid grid-cols-2 gap-4">
-                    <div>{row.left}</div>
-                    <div>{row.right}</div>
+                    <div>{formatRelativeName(row.left, row.leftSymbol)}</div>
+                    <div>{formatRelativeName(row.right, row.rightSymbol)}</div>
                   </div>
                 );
               }
               return (
                 <div key={row.id} className="text-center">
-                  {row.left}
+                  {formatRelativeName(row.left, row.leftSymbol)}
                 </div>
               );
             })}
@@ -1743,6 +1825,89 @@ function EditorView({
                   </div>
                 </div>
               )}
+              <div className="col-span-12">
+                <label className="text-sm block">Symbolbilde</label>
+                <div className="flex items-center gap-2 mt-1">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="text-sm"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        setAd({
+                          ...ad,
+                          symbolImage: String(reader.result || ""),
+                          symbol: "",
+                          symbolLockId: "",
+                          symbolSizeLocked: false,
+                          symbolImageScale: 1,
+                          symbolImageOffsetX: 0,
+                          symbolImageOffsetY: 0,
+                        });
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                  {ad.symbolImage ? (
+                    <button
+                      className="px-3 py-1 border rounded text-sm"
+                      onClick={() =>
+                        setAd({
+                          ...ad,
+                          symbolImage: "",
+                          symbolImageScale: 1,
+                          symbolImageOffsetX: 0,
+                          symbolImageOffsetY: 0,
+                        })
+                      }
+                    >
+                      Fjern
+                    </button>
+                  ) : null}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">Dra bildet i forhåndsvisningen for å justere utsnitt.</div>
+              </div>
+              {ad.symbolImage ? (
+                <>
+                  <div className="col-span-6">
+                    <label className="text-sm block">Ramme</label>
+                    <select
+                      className="w-full border p-2 rounded mt-1 text-sm"
+                      value={ad.symbolImageShape || "circle"}
+                      onChange={(e) => setAd({ ...ad, symbolImageShape: e.target.value })}
+                    >
+                      <option value="square">Firkant</option>
+                      <option value="circle">Sirkel</option>
+                      <option value="oval">Oval</option>
+                      <option value="heart">Hjerte</option>
+                    </select>
+                  </div>
+                  <div className="col-span-6">
+                    <label className="text-sm block">Zoom</label>
+                    <div className="flex items-center gap-2 mt-2">
+                      <input
+                        type="range"
+                        min="0.8"
+                        max="2"
+                        step="0.05"
+                        value={ad.symbolImageScale || 1}
+                        onChange={(e) => setAd({ ...ad, symbolImageScale: Number(e.target.value) })}
+                        className="w-full"
+                      />
+                      <div className="text-xs w-10 text-right">{(ad.symbolImageScale || 1).toFixed(2)}x</div>
+                    </div>
+                    <button
+                      className="mt-2 px-3 py-1 border rounded text-sm"
+                      onClick={() => setAd({ ...ad, symbolImageScale: 1, symbolImageOffsetX: 0, symbolImageOffsetY: 0 })}
+                    >
+                      Tilbakestill utsnitt
+                    </button>
+                  </div>
+                </>
+              ) : null}
               {ad.annonseType === "Takk" ? (
                 <>
                   <div className="col-span-12">
@@ -1889,42 +2054,78 @@ function EditorView({
                           <option value="empty">Tom rad</option>
                         </select>
                       </div>
-                      <div className="col-span-4">
-                        <input
-                          className={`w-full border p-2 rounded ${row.layout.startsWith("relation") ? "text-xs" : "text-sm"}`}
-                          placeholder={
-                            row.layout === "relation-one"
-                              ? "f.eks. kone"
-                              : row.layout === "relation-two"
-                              ? "f.eks. datter"
-                              : ""
-                          }
-                          value={row.left || ""}
-                          disabled={row.layout === "empty"}
-                          onChange={(e) => {
-                            const next = [...ad.relativesRows];
-                            next[idx] = { ...row, left: e.target.value };
-                            setAd({ ...ad, relativesRows: next });
-                          }}
-                        />
-                      </div>
-                      <div className="col-span-4">
-                        <input
-                          className={`w-full border p-2 rounded ${row.layout.startsWith("relation") ? "text-xs" : "text-sm"}`}
-                          placeholder={row.layout === "relation-two" ? "f.eks. svigersønn" : ""}
-                          value={row.right || ""}
-                          disabled={row.layout !== "two" && row.layout !== "relation-two"}
-                          onChange={(e) => {
-                            const next = [...ad.relativesRows];
-                            next[idx] = { ...row, right: e.target.value };
-                            setAd({ ...ad, relativesRows: next });
-                          }}
-                        />
-                      </div>
-                          <div className="col-span-1 text-right">
-                            <button
-                              className="px-2 py-1 border rounded"
-                              onClick={() => {
+                        <div className="col-span-4">
+                          <input
+                            className={`w-full border p-2 rounded ${row.layout.startsWith("relation") ? "text-xs" : "text-sm"}`}
+                            placeholder={
+                              row.layout === "relation-one"
+                                ? "f.eks. kone"
+                                : row.layout === "relation-two"
+                                ? "f.eks. datter"
+                                : ""
+                            }
+                            value={row.left || ""}
+                            disabled={row.layout === "empty"}
+                            onChange={(e) => {
+                              const next = [...ad.relativesRows];
+                              next[idx] = { ...row, left: e.target.value };
+                              setAd({ ...ad, relativesRows: next });
+                            }}
+                          />
+                        </div>
+                        <div className="col-span-3">
+                          <input
+                            className={`w-full border p-2 rounded ${row.layout.startsWith("relation") ? "text-xs" : "text-sm"}`}
+                            placeholder={row.layout === "relation-two" ? "f.eks. svigersønn" : ""}
+                            value={row.right || ""}
+                            disabled={row.layout !== "two" && row.layout !== "relation-two"}
+                            onChange={(e) => {
+                              const next = [...ad.relativesRows];
+                              next[idx] = { ...row, right: e.target.value };
+                              setAd({ ...ad, relativesRows: next });
+                            }}
+                          />
+                        </div>
+                        <div className="col-span-1">
+                          {row.layout === "one" || row.layout === "two" ? (
+                            <div className="grid gap-1">
+                              <select
+                                className="w-full border p-2 rounded text-sm"
+                                value={row.leftSymbol || ""}
+                                onChange={(e) => {
+                                  const next = [...ad.relativesRows];
+                                  next[idx] = { ...row, leftSymbol: e.target.value };
+                                  setAd({ ...ad, relativesRows: next });
+                                }}
+                                aria-label="Symbol venstre"
+                              >
+                                <option value=""></option>
+                                <option value="deceased">✝</option>
+                                <option value="pet">🐾</option>
+                              </select>
+                              {row.layout === "two" ? (
+                                <select
+                                  className="w-full border p-2 rounded text-sm"
+                                  value={row.rightSymbol || ""}
+                                  onChange={(e) => {
+                                    const next = [...ad.relativesRows];
+                                    next[idx] = { ...row, rightSymbol: e.target.value };
+                                    setAd({ ...ad, relativesRows: next });
+                                  }}
+                                  aria-label="Symbol høyre"
+                                >
+                                  <option value=""></option>
+                                  <option value="deceased">✝</option>
+                                  <option value="pet">🐾</option>
+                                </select>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="col-span-1 text-right">
+                          <button
+                            className="px-2 py-1 border rounded"
+                            onClick={() => {
                                 const next = ad.relativesRows.filter((_, i) => i !== idx);
                                 setAd({ ...ad, relativesRows: next });
                               }}
@@ -1941,7 +2142,10 @@ function EditorView({
                     onClick={() =>
                       setAd({
                         ...ad,
-                        relativesRows: [...(ad.relativesRows || []), { id: `row-${Date.now()}`, layout: "one", left: "", right: "" }],
+                        relativesRows: [
+                          ...(ad.relativesRows || []),
+                          { id: `row-${Date.now()}`, layout: "one", left: "", right: "", leftSymbol: "", rightSymbol: "" },
+                        ],
                       })
                     }
                   >
@@ -1952,7 +2156,10 @@ function EditorView({
                     onClick={() =>
                       setAd({
                         ...ad,
-                        relativesRows: [...(ad.relativesRows || []), { id: `row-${Date.now()}`, layout: "two", left: "", right: "" }],
+                        relativesRows: [
+                          ...(ad.relativesRows || []),
+                          { id: `row-${Date.now()}`, layout: "two", left: "", right: "", leftSymbol: "", rightSymbol: "" },
+                        ],
                       })
                     }
                   >
@@ -1965,7 +2172,10 @@ function EditorView({
                       const layout = prev && (prev.layout === "two" || prev.layout === "relation-two") ? "relation-two" : "relation-one";
                       setAd({
                         ...ad,
-                        relativesRows: [...(ad.relativesRows || []), { id: `row-${Date.now()}`, layout, left: "", right: "" }],
+                        relativesRows: [
+                          ...(ad.relativesRows || []),
+                          { id: `row-${Date.now()}`, layout, left: "", right: "", leftSymbol: "", rightSymbol: "" },
+                        ],
                       });
                     }}
                   >
@@ -1976,7 +2186,10 @@ function EditorView({
                     onClick={() =>
                       setAd({
                         ...ad,
-                            relativesRows: [...(ad.relativesRows || []), { id: `row-${Date.now()}`, layout: "empty", left: "", right: "" }],
+                            relativesRows: [
+                              ...(ad.relativesRows || []),
+                              { id: `row-${Date.now()}`, layout: "empty", left: "", right: "", leftSymbol: "", rightSymbol: "" },
+                            ],
                           })
                         }
                       >
@@ -2044,7 +2257,23 @@ function EditorView({
             </div>
           </div>
           <div className="col-span-6">
-            <div className="mb-2 text-sm text-slate-600">Livevisning</div>
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-sm text-slate-600">Livevisning</div>
+              <div className="inline-flex border rounded overflow-hidden text-sm">
+                <button
+                  className={`px-3 py-1 ${livePreviewMode === "digital" ? "bg-slate-800 text-white" : "bg-white"}`}
+                  onClick={() => setLivePreviewMode("digital")}
+                >
+                  Digital
+                </button>
+                <button
+                  className={`px-3 py-1 ${livePreviewMode === "pdf" ? "bg-slate-800 text-white" : "bg-white"}`}
+                  onClick={() => setLivePreviewMode("pdf")}
+                >
+                  PDF
+                </button>
+              </div>
+            </div>
             {renderPreview()}
           </div>
         </div>
@@ -2153,6 +2382,10 @@ function EditorView({
                         symbolLockId: s.id,
                         symbolSize: lockedSize,
                         symbolSizeLocked: Boolean(sizeMm),
+                        symbolImageScale: 1,
+                        symbolImageOffsetX: 0,
+                        symbolImageOffsetY: 0,
+                        symbolImageShape: ad.symbolImageShape || "circle",
                       });
                     } else {
                       setAd({
@@ -4138,7 +4371,7 @@ function defaultAd() {
     deathDate: "",
     deathFreeText: "",
     verse1: "",
-    relativesRows: [{ id: "row-1", layout: "one", left: "", right: "" }],
+    relativesRows: [{ id: "row-1", layout: "one", left: "", right: "", leftSymbol: "", rightSymbol: "" }],
     verse2: "",
     ceremonyInfo: "",
     donations: "",
