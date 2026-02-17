@@ -2969,6 +2969,8 @@ function AdminUsersView({
 
   function handlePriceChange(rowId, group, field, value) {
     if (!isSuperAdmin) return;
+    const row = safePriceList.find((item) => item.id === rowId);
+    const publication = row ? row.publication : rowId;
     setPriceList((prev) =>
       prev.map((row) =>
         row.id === rowId
@@ -2976,27 +2978,51 @@ function AdminUsersView({
           : row
       )
     );
+    onLogAction?.({
+      module: "Administrasjon",
+      entity: "Prisliste",
+      entityId: rowId,
+      action: "Endret pris",
+      details: `${publication} • ${group}.${field} -> ${value}`,
+    });
   }
 
   function handleCustomerCardChange(cardId, field, value) {
     if (!isSuperAdmin) return;
+    const card = safeCustomerCards.find((item) => item.id === cardId);
+    const cardName = card ? card.name : cardId;
     setCustomerCards((prev) =>
       prev.map((card) => (card.id === cardId ? { ...card, [field]: value } : card))
     );
+    onLogAction?.({
+      module: "Administrasjon",
+      entity: "Kundekort",
+      entityId: cardId,
+      action: "Endret kundekort",
+      details: `${cardName} • ${field} -> ${value}`,
+    });
   }
 
   function handleAddCustomerCard() {
     if (!isSuperAdmin) return;
+    const newCard = {
+      id: `card-${Math.random().toString(36).slice(2, 8)}`,
+      name: "",
+      region: currentUserRecord.region || "Midt",
+      type: "percent",
+      value: 0,
+    };
     setCustomerCards((prev) => [
       ...prev,
-      {
-        id: `card-${Math.random().toString(36).slice(2, 8)}`,
-        name: "",
-        region: currentUserRecord.region || "Midt",
-        type: "percent",
-        value: 0,
-      },
+      newCard,
     ]);
+    onLogAction?.({
+      module: "Administrasjon",
+      entity: "Kundekort",
+      entityId: newCard.id,
+      action: "Opprettet kundekort",
+      details: newCard.region,
+    });
   }
 
   function openAddSymbol() {
@@ -3573,7 +3599,15 @@ function AdminUsersView({
                             className={`px-2 py-1 border rounded text-xs ${isSuperAdmin ? "text-red-600" : "text-slate-400 cursor-not-allowed"}`}
                             onClick={() => {
                               if (!isSuperAdmin) return;
+                              const label = card.name || card.id;
                               setCustomerCards((prev) => prev.filter((c) => c.id !== card.id));
+                              onLogAction?.({
+                                module: "Administrasjon",
+                                entity: "Kundekort",
+                                entityId: card.id,
+                                action: "Slettet kundekort",
+                                details: label,
+                              });
                             }}
                             disabled={!isSuperAdmin}
                           >
