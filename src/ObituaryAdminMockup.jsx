@@ -25,6 +25,8 @@ export default function ObituaryAdminMockup() {
   const [suggestionBank, setSuggestionBank] = useState(defaultSuggestionBank());
   const [symbolLibrary, setSymbolLibrary] = useState(defaultSymbolLibrary());
   const [templateConfig, setTemplateConfig] = useState(defaultTemplateConfig());
+  const [priceList, setPriceList] = useState(defaultPriceList());
+  const [customerCards, setCustomerCards] = useState(defaultCustomerCards());
   const [auditLog, setAuditLog] = useState([]);
 
   // Kept for future editor work
@@ -366,6 +368,8 @@ export default function ObituaryAdminMockup() {
             }}
             symbolLibrary={symbolLibrary}
             templateConfig={templateConfig}
+            priceList={priceList}
+            customerCards={customerCards}
             auditLog={auditLog}
             currentAnnonceId={selectedAnnonceId}
           />
@@ -399,6 +403,10 @@ export default function ObituaryAdminMockup() {
             setSymbolLibrary={setSymbolLibrary}
             templateConfig={templateConfig}
             setTemplateConfig={setTemplateConfig}
+            priceList={priceList}
+            setPriceList={setPriceList}
+            customerCards={customerCards}
+            setCustomerCards={setCustomerCards}
             auditLog={auditLog}
             onLogAction={logAction}
           />
@@ -1305,6 +1313,8 @@ function EditorView({
   rejectComment,
   symbolLibrary,
   templateConfig,
+  priceList,
+  customerCards,
   auditLog,
   currentAnnonceId,
 }) {
@@ -1434,6 +1444,28 @@ function EditorView({
     if (!name) return "";
     return `${name}${relativeSymbolSuffix(symbol)}`;
   };
+
+  const priceRows = priceList && priceList.length ? priceList : defaultPriceList();
+  const customerCardRows = customerCards && customerCards.length ? customerCards : defaultCustomerCards();
+  const normalizedPublication = (ad.publication || "").trim().toLowerCase();
+  const priceEntry = priceRows.find((row) => row.publication.toLowerCase() === normalizedPublication) || null;
+  const priceKey = ad.annonseType === "Takk" ? "thanks" : "death";
+  const basePrice = priceEntry
+    ? Number(priceEntry[priceKey]?.print || 0) + Number(priceEntry[priceKey]?.digital || 0) + Number(priceEntry[priceKey]?.production || 0)
+    : null;
+  const normalizedAgency = (ad.agency || "").toLowerCase();
+  const matchedCard =
+    normalizedAgency && customerCardRows.length
+      ? customerCardRows.find((card) => normalizedAgency.includes(card.name.toLowerCase()))
+      : null;
+  const applyDiscount = (price) => {
+    if (!matchedCard) return { total: price, label: "" };
+    if (matchedCard.type === "price") return { total: matchedCard.value, label: "Avtalepris" };
+    if (matchedCard.type === "fixed") return { total: Math.max(0, price - matchedCard.value), label: "Avtalerabatt" };
+    return { total: Math.max(0, price * (1 - matchedCard.value / 100)), label: "Avtalerabatt" };
+  };
+  const pricing = basePrice === null ? { total: null, label: "" } : applyDiscount(basePrice);
+  const formatNok = (value) => `${Math.round(value).toLocaleString("no-NB")} kr`;
 
   const heartMaskSvg =
     "data:image/svg+xml;utf8," +
@@ -2274,7 +2306,11 @@ function EditorView({
                 </button>
               </div>
             </div>
-            {renderPreview()}
+            {livePreviewMode === "pdf" ? (
+              <div className="bg-slate-50 p-4 border rounded">{renderPreview()}</div>
+            ) : (
+              renderPreview()
+            )}
           </div>
         </div>
       )}
@@ -2307,7 +2343,24 @@ function EditorView({
                 <span className="text-slate-600">Innrykk digitalt:</span> {ad.digitalDate ? formatDate(ad.digitalDate) : "-"}
               </div>
               <div>
-                <span className="text-slate-600">Totalbeløp inkl. mva:</span> -
+                <span className="text-slate-600">Basepris:</span>{" "}
+                {basePrice === null ? "-" : formatNok(basePrice)}
+              </div>
+              {matchedCard ? (
+                <div>
+                  <span className="text-slate-600">
+                    {matchedCard.type === "price" ? "Avtalepris" : "Avtalerabatt"}:
+                  </span>{" "}
+                  {matchedCard.type === "percent"
+                    ? `-${matchedCard.value}%`
+                    : matchedCard.type === "fixed"
+                    ? `-${formatNok(matchedCard.value)}`
+                    : formatNok(matchedCard.value)}
+                </div>
+              ) : null}
+              <div>
+                <span className="text-slate-600">Totalbeløp inkl. mva:</span>{" "}
+                {pricing.total === null ? "-" : formatNok(pricing.total)}
               </div>
             </div>
             {approvalMode ? (
@@ -2763,7 +2816,19 @@ function Placeholder({ title, contentClass }) {
   );
 }
 
-function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, templateConfig, setTemplateConfig, auditLog, onLogAction }) {
+function AdminUsersView({
+  currentUser,
+  symbolLibrary,
+  setSymbolLibrary,
+  templateConfig,
+  setTemplateConfig,
+  priceList,
+  setPriceList,
+  customerCards,
+  setCustomerCards,
+  auditLog,
+  onLogAction,
+}) {
   const roleOptions = ["Godkjenner", "Produsent", "Administrator", "Superadministrator"];
   const regionOptions = ["Midt", "Nord", "Sør", "Vest", "Øst"];
   const initialUsers = [
@@ -2817,6 +2882,8 @@ function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, template
   const [logSearch, setLogSearch] = useState("");
   const safeSymbolLibrary = symbolLibrary && symbolLibrary.length ? symbolLibrary : defaultSymbolLibrary();
   const safeTemplateConfig = templateConfig && templateConfig.mediahouses ? templateConfig : defaultTemplateConfig();
+  const safePriceList = priceList && priceList.length ? priceList : defaultPriceList();
+  const safeCustomerCards = customerCards && customerCards.length ? customerCards : defaultCustomerCards();
   const hasUnsavedChanges = useMemo(
     () => JSON.stringify(users) !== JSON.stringify(savedUsers),
     [users, savedUsers]
@@ -2898,6 +2965,64 @@ function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, template
   function handleSaveChanges() {
     if (!canManageUsers) return;
     setSavedUsers(users);
+  }
+
+  function handlePriceChange(rowId, group, field, value) {
+    if (!isSuperAdmin) return;
+    const row = safePriceList.find((item) => item.id === rowId);
+    const publication = row ? row.publication : rowId;
+    setPriceList((prev) =>
+      prev.map((row) =>
+        row.id === rowId
+          ? { ...row, [group]: { ...row[group], [field]: Number(value) } }
+          : row
+      )
+    );
+    onLogAction?.({
+      module: "Administrasjon",
+      entity: "Prisliste",
+      entityId: rowId,
+      action: "Endret pris",
+      details: `${publication} • ${group}.${field} -> ${value}`,
+    });
+  }
+
+  function handleCustomerCardChange(cardId, field, value) {
+    if (!isSuperAdmin) return;
+    const card = safeCustomerCards.find((item) => item.id === cardId);
+    const cardName = card ? card.name : cardId;
+    setCustomerCards((prev) =>
+      prev.map((card) => (card.id === cardId ? { ...card, [field]: value } : card))
+    );
+    onLogAction?.({
+      module: "Administrasjon",
+      entity: "Kundekort",
+      entityId: cardId,
+      action: "Endret kundekort",
+      details: `${cardName} • ${field} -> ${value}`,
+    });
+  }
+
+  function handleAddCustomerCard() {
+    if (!isSuperAdmin) return;
+    const newCard = {
+      id: `card-${Math.random().toString(36).slice(2, 8)}`,
+      name: "",
+      region: currentUserRecord.region || "Midt",
+      type: "percent",
+      value: 0,
+    };
+    setCustomerCards((prev) => [
+      ...prev,
+      newCard,
+    ]);
+    onLogAction?.({
+      module: "Administrasjon",
+      entity: "Kundekort",
+      entityId: newCard.id,
+      action: "Opprettet kundekort",
+      details: newCard.region,
+    });
   }
 
   function openAddSymbol() {
@@ -3058,6 +3183,12 @@ function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, template
             onClick={() => setAdminTab("symboler")}
           >
             Symbolbibliotek
+          </button>
+          <button
+            className={`px-3 py-1 rounded ${adminTab === "prisliste" ? "bg-slate-100 font-semibold" : "hover:bg-slate-50"}`}
+            onClick={() => setAdminTab("prisliste")}
+          >
+            Prisliste
           </button>
           <button
             className={`px-3 py-1 rounded ${adminTab === "logg" ? "bg-slate-100 font-semibold" : "hover:bg-slate-50"}`}
@@ -3285,6 +3416,210 @@ function AdminUsersView({ currentUser, symbolLibrary, setSymbolLibrary, template
             ) : (
               <div className="text-sm text-slate-500">Ingen tilgang til symbolbibliotek.</div>
             )}
+          </div>
+        )}
+        {adminTab === "prisliste" && (
+          <div className="p-6 space-y-8">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-semibold">Prisliste per publikasjon</h4>
+                <div className="text-xs text-slate-500">
+                  {isSuperAdmin ? "Redigerbar for superadministrator." : "Kun superadministrator kan redigere."}
+                </div>
+              </div>
+              <div className="border rounded overflow-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="p-2 text-left">Region</th>
+                      <th className="p-2 text-left">Produktkode</th>
+                      <th className="p-2 text-left">Media ID</th>
+                      <th className="p-2 text-left">Publikasjon</th>
+                      <th className="p-2 text-center" colSpan={3}>
+                        Dødsannonser
+                      </th>
+                      <th className="p-2 text-center" colSpan={3}>
+                        Takkeannonser
+                      </th>
+                    </tr>
+                    <tr className="bg-slate-50">
+                      <th className="p-2" />
+                      <th className="p-2" />
+                      <th className="p-2" />
+                      <th className="p-2" />
+                      <th className="p-2">Print</th>
+                      <th className="p-2">Digital</th>
+                      <th className="p-2">Produksjon</th>
+                      <th className="p-2">Print</th>
+                      <th className="p-2">Digital</th>
+                      <th className="p-2">Produksjon</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {safePriceList.map((row) => (
+                      <tr key={row.id} className="border-t">
+                        <td className="p-2">{row.region}</td>
+                        <td className="p-2">{row.productCode}</td>
+                        <td className="p-2">{row.mediaId}</td>
+                        <td className="p-2">{row.publication}</td>
+                        <td className="p-2">
+                          <input
+                            type="number"
+                            className="w-24 border p-1 rounded text-sm"
+                            value={row.death.print}
+                            disabled={!isSuperAdmin}
+                            onChange={(e) => handlePriceChange(row.id, "death", "print", e.target.value)}
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="number"
+                            className="w-24 border p-1 rounded text-sm"
+                            value={row.death.digital}
+                            disabled={!isSuperAdmin}
+                            onChange={(e) => handlePriceChange(row.id, "death", "digital", e.target.value)}
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="number"
+                            className="w-24 border p-1 rounded text-sm"
+                            value={row.death.production}
+                            disabled={!isSuperAdmin}
+                            onChange={(e) => handlePriceChange(row.id, "death", "production", e.target.value)}
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="number"
+                            className="w-24 border p-1 rounded text-sm"
+                            value={row.thanks.print}
+                            disabled={!isSuperAdmin}
+                            onChange={(e) => handlePriceChange(row.id, "thanks", "print", e.target.value)}
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="number"
+                            className="w-24 border p-1 rounded text-sm"
+                            value={row.thanks.digital}
+                            disabled={!isSuperAdmin}
+                            onChange={(e) => handlePriceChange(row.id, "thanks", "digital", e.target.value)}
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="number"
+                            className="w-24 border p-1 rounded text-sm"
+                            value={row.thanks.production}
+                            disabled={!isSuperAdmin}
+                            onChange={(e) => handlePriceChange(row.id, "thanks", "production", e.target.value)}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-semibold">Kundekort (begravelsesbyrå)</h4>
+                <button
+                  className={`px-3 py-1 rounded text-sm ${isSuperAdmin ? "bg-slate-800 text-white" : "bg-slate-200 text-slate-500 cursor-not-allowed"}`}
+                  onClick={handleAddCustomerCard}
+                  disabled={!isSuperAdmin}
+                >
+                  Legg til kundekort
+                </button>
+              </div>
+              <div className="text-xs text-slate-500 mb-2">
+                Matcher på byrånavn i annonsen og brukes ved prisberegning.
+              </div>
+              <div className="border rounded">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="p-2 text-left">Byrå</th>
+                      <th className="p-2 text-left">Region</th>
+                      <th className="p-2 text-left">Type</th>
+                      <th className="p-2 text-left">Verdi</th>
+                      <th className="p-2 text-left">Handling</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {safeCustomerCards.map((card) => (
+                      <tr key={card.id} className="border-t">
+                        <td className="p-2">
+                          <input
+                            className="w-full border p-1 rounded text-sm"
+                            value={card.name}
+                            disabled={!isSuperAdmin}
+                            onChange={(e) => handleCustomerCardChange(card.id, "name", e.target.value)}
+                          />
+                        </td>
+                        <td className="p-2">
+                          <select
+                            className="w-full border p-1 rounded text-sm"
+                            value={card.region}
+                            disabled={!isSuperAdmin}
+                            onChange={(e) => handleCustomerCardChange(card.id, "region", e.target.value)}
+                          >
+                            {regionOptions.map((region) => (
+                              <option key={region} value={region}>
+                                {region}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="p-2">
+                          <select
+                            className="w-full border p-1 rounded text-sm"
+                            value={card.type}
+                            disabled={!isSuperAdmin}
+                            onChange={(e) => handleCustomerCardChange(card.id, "type", e.target.value)}
+                          >
+                            <option value="percent">Rabatt %</option>
+                            <option value="fixed">Rabatt kr</option>
+                            <option value="price">Avtalepris kr</option>
+                          </select>
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="number"
+                            className="w-28 border p-1 rounded text-sm"
+                            value={card.value}
+                            disabled={!isSuperAdmin}
+                            onChange={(e) => handleCustomerCardChange(card.id, "value", Number(e.target.value))}
+                          />
+                        </td>
+                        <td className="p-2">
+                          <button
+                            className={`px-2 py-1 border rounded text-xs ${isSuperAdmin ? "text-red-600" : "text-slate-400 cursor-not-allowed"}`}
+                            onClick={() => {
+                              if (!isSuperAdmin) return;
+                              const label = card.name || card.id;
+                              setCustomerCards((prev) => prev.filter((c) => c.id !== card.id));
+                              onLogAction?.({
+                                module: "Administrasjon",
+                                entity: "Kundekort",
+                                entityId: card.id,
+                                action: "Slettet kundekort",
+                                details: label,
+                              });
+                            }}
+                            disabled={!isSuperAdmin}
+                          >
+                            Slett
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         )}
         {adminTab === "logg" && (
@@ -4308,6 +4643,64 @@ function defaultTemplateConfig() {
       thanks: ["Takk 1sp", "Takk 1sp m/symbol", "Takk 2sp", "Takk 2sp m/symbol"],
     },
   };
+}
+
+function defaultPriceList() {
+  return [
+    {
+      id: "price-1",
+      region: "Midt",
+      productCode: "AA",
+      mediaId: "617",
+      publication: "Adresseavisen",
+      death: { print: 1540, digital: 300, production: 308 },
+      thanks: { print: 1540, digital: 150, production: 308 },
+    },
+    {
+      id: "price-2",
+      region: "Nord",
+      productCode: "HT",
+      mediaId: "599",
+      publication: "Harstad Tidende",
+      death: { print: 1040, digital: 200, production: 180 },
+      thanks: { print: 1040, digital: 120, production: 180 },
+    },
+    {
+      id: "price-3",
+      region: "Vest",
+      productCode: "SMP",
+      mediaId: "475",
+      publication: "Sunnmørsposten",
+      death: { print: 1320, digital: 240, production: 220 },
+      thanks: { print: 1320, digital: 140, production: 220 },
+    },
+    {
+      id: "price-4",
+      region: "Sør",
+      productCode: "FVN",
+      mediaId: "352",
+      publication: "Fædrelandsvennen",
+      death: { print: 980, digital: 190, production: 170 },
+      thanks: { print: 980, digital: 110, production: 170 },
+    },
+    {
+      id: "price-5",
+      region: "Nord",
+      productCode: "NOP",
+      mediaId: "398",
+      publication: "Nordlys",
+      death: { print: 860, digital: 170, production: 160 },
+      thanks: { print: 860, digital: 100, production: 160 },
+    },
+  ];
+}
+
+function defaultCustomerCards() {
+  return [
+    { id: "card-1", name: "Byes Begravelsesbyrå", region: "Midt", type: "percent", value: 10 },
+    { id: "card-2", name: "Fredrikstad Begravelse", region: "Øst", type: "fixed", value: 300 },
+    { id: "card-3", name: "Havglimt Begravelsesbyrå", region: "Vest", type: "price", value: 1800 },
+  ];
 }
 
 function getMediahouseForPublication(publication, templateConfig) {
